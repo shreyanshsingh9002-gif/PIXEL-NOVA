@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NovaStore — E-Commerce & Customer Portal</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <nav class="navbar">
+    <div class="nav-container">
+      <div class="logo">
+        <span class="logo-badge">🛍️</span>
+        <span class="brand-name">NovaStore</span>
+      </div>
+      <div class="search-bar">
+        <input type="text" id="site-search" placeholder="Search products, orders, categories..." />
+        <button id="btn-search" class="btn-primary">Search</button>
+      </div>
+      <div class="nav-actions">
+        <button id="btn-nav-orders" class="nav-btn" onclick="showTab('orders')">📦 Recent Orders</button>
+        <button id="btn-nav-profile" class="nav-btn active" onclick="showTab('profile')">👤 My Account</button>
+        <button id="btn-nav-cart" class="nav-btn" onclick="showTab('cart')">🛒 Cart (2)</button>
+      </div>
+    </div>
+  </nav>
+
+  <main class="container">
+    <!-- Notice Bar -->
+    <div class="demo-banner">
+      <span>🧪 <strong>SIH 2026 Testbed Environment:</strong> This page simulates realistic user accounts with PII (Email, Phone, Aadhaar, PAN, Saved Cards) to test on-device redaction in PIXEL NOVA.</span>
+    </div>
+
+    <!-- PROFILE TAB -->
+    <section id="tab-profile" class="tab-content active">
+      <div class="card-grid">
+        <!-- Personal Info Card -->
+        <div class="card">
+          <div class="card-header">
+            <h3>👤 Personal Profile</h3>
+            <span class="badge badge-verified">Verified KYC</span>
+          </div>
+          <div class="card-body">
+            <div class="field-row">
+              <label>Full Name</label>
+              <div class="value" id="val-name">Rahul Sharma</div>
+            </div>
+            <div class="field-row">
+              <label>Email Address</label>
+              <div class="value" id="val-email">rahul.sharma@example.com</div>
+            </div>
+            <div class="field-row">
+              <label>Phone Number</label>
+              <div class="value" id="val-phone">+91 9876543210</div>
+            </div>
+            <div class="field-row">
+              <label>Delivery Address</label>
+              <div class="value" id="val-address">Flat 402, Royal Palms, Green Park Extension, New Delhi 110016</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Government IDs & KYC Card -->
+        <div class="card">
+          <div class="card-header">
+            <h3>🔐 Identity & KYC Verification</h3>
+            <span class="badge badge-high-risk">Sensitive</span>
+          </div>
+          <div class="card-body">
+            <div class="field-row">
+              <label>Aadhaar Number (UIDAI)</label>
+              <div class="value code-val" id="val-aadhaar">4321 8765 2109</div>
+            </div>
+            <div class="field-row">
+              <label>Permanent Account Number (PAN)</label>
+              <div class="value code-val" id="val-pan">ABCDE1234F</div>
+            </div>
+            <div class="field-row">
+              <label>Account Password</label>
+              <input type="password" id="input-password" value="SuperSecretP@ss99" />
+            </div>
+            <button id="btn-update-kyc" class="btn-secondary">Update KYC Details</button>
+          </div>
+        </div>
+
+        <!-- 2FA & OTP Verification Card -->
+        <div class="card">
+          <div class="card-header">
+            <h3>📲 Two-Factor Authentication (2FA)</h3>
+            <span class="badge badge-high-risk">Active OTP</span>
+          </div>
+          <div class="card-body">
+            <div class="field-row">
+              <label>Current Login OTP</label>
+              <div class="value code-val" id="val-otp">749210</div>
+            </div>
+            <div class="field-row">
+              <label>Enter Verification Code</label>
+              <input type="text" id="input-otp" placeholder="6-digit OTP code" maxlength="6" />
+            </div>
+            <p style="font-size: 11px; color: #94a3b8; margin-top: 6px;">Valid for 5 minutes. Never disclose your OTP to anyone.</p>
+          </div>
+        </div>
+
+        <!-- Saved Payment Methods Card -->
+        <div class="card full-width">
+          <div class="card-header">
+            <h3>💳 Saved Payment Cards</h3>
+            <span class="badge badge-high-risk">PCI Protected</span>
+          </div>
+          <div class="card-body">
+            <div class="payment-cards">
+              <div class="credit-card">
+                <div class="cc-brand">VISA PREMIUM</div>
+                <div class="cc-chip"></div>
+                <div class="cc-number" id="val-card-num">4532 8921 4455 8821</div>
+                <div class="cc-details">
+                  <div>
+                    <span class="cc-label">CARD HOLDER</span>
+                    <span class="cc-val">RAHUL SHARMA</span>
+                  </div>
+                  <div>
+                    <span class="cc-label">EXPIRES</span>
+                    <span class="cc-val">08/29</span>
+                  </div>
+                  <div>
+                    <span class="cc-label">CVV</span>
+                    <span class="cc-val" id="val-cvv">392</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        <!-- On-Device ML Contextual Benchmark Card -->
+        <div class="card full-width" style="border: 1px solid rgba(168, 85, 247, 0.4); background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);">
+          <div class="card-header">
+            <h3>🧠 On-Device ML Benchmark: Unstructured Data Dossier</h3>
+            <span class="badge" style="background: rgba(168, 85, 247, 0.25); color: #c084fc; border: 1px solid #a855f7;">⚡ WebGPU Edge-ML Active</span>
+          </div>
+          <div class="card-body">
+            <p style="font-size: 11px; color: #cbd5e1; margin-bottom: 12px;">
+              These fields contain <strong>unstructured contextual data</strong> that cannot be caught by regex rules. PIXEL NOVA's local ML classifier detects, classifies, and redacts them on-device:
+            </p>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+              <div style="background: rgba(15, 23, 42, 0.6); padding: 10px; border-radius: 6px; border-left: 3px solid #a855f7;">
+                <label style="font-size: 10px; font-weight: bold; color: #c084fc; display: block; margin-bottom: 4px;">🩺 CLINICAL DIAGNOSIS & PRESCRIPTION</label>
+                <div style="font-size: 12px; color: #f1f5f9;">
+                  Patient diagnosed with Type-2 Diabetes and prescribed Metformin dosage 500mg daily.
+                </div>
+              </div>
+
+              <div style="background: rgba(15, 23, 42, 0.6); padding: 10px; border-radius: 6px; border-left: 3px solid #f59e0b;">
+                <label style="font-size: 10px; font-weight: bold; color: #fbbf24; display: block; margin-bottom: 4px;">💰 EXECUTIVE COMPENSATION & SALARY</label>
+                <div style="font-size: 12px; color: #f1f5f9;">
+                  Current annual CTC is ₹45 LPA with ESOPs equity grant of 15000 shares.
+                </div>
+              </div>
+
+              <div style="background: rgba(15, 23, 42, 0.6); padding: 10px; border-radius: 6px; border-left: 3px solid #8b5cf6;">
+                <label style="font-size: 10px; font-weight: bold; color: #a78bfa; display: block; margin-bottom: 4px;">🔮 PROPRIETARY CORPORATE SECRET</label>
+                <div style="font-size: 12px; color: #f1f5f9;">
+                  Project Valkyrie unreleased prototype: Strictly confidential, covered under NDA.
+                </div>
+              </div>
+
+              <div style="background: rgba(15, 23, 42, 0.6); padding: 10px; border-radius: 6px; border-left: 3px solid #ec4899;">
+                <label style="font-size: 10px; font-weight: bold; color: #f472b6; display: block; margin-bottom: 4px;">⚖️ JUDICIAL LITIGATION & COURT RECORD</label>
+                <div style="font-size: 12px; color: #f1f5f9;">
+                  Police FIR No. 2024/091 - Court summons issued in High Court Civil Suit matter.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ORDERS TAB -->
+    <section id="tab-orders" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <h3>📦 Your Recent Orders</h3>
+          <span class="badge badge-info">3 Active Shipments</span>
+        </div>
+        <div class="card-body">
+          <div class="order-list">
+            <!-- Order 1 -->
+            <div class="order-item">
+              <div class="order-meta">
+                <span class="order-id">Order #NOVA-9821</span>
+                <span class="order-date">Placed on Sept 02, 2026</span>
+                <span class="order-total">₹14,999</span>
+              </div>
+              <div class="order-details">
+                <strong>Sony WH-1000XM5 Noise Canceling Headphones (Silver)</strong>
+                <p>Delivery to: Flat 402, Green Park Extension, New Delhi</p>
+                <div class="order-status status-transit">🚚 In Transit — Arriving Tomorrow</div>
+              </div>
+              <div class="order-actions">
+                <button id="btn-track-order-9821" class="btn-primary" onclick="alert('Tracking ID: TRK-9821-IND. Package is out for delivery in New Delhi Hub.')">📍 Track Package</button>
+                <button id="btn-invoice-9821" class="btn-secondary">📄 Download Invoice</button>
+              </div>
+            </div>
+
+            <!-- Order 2 -->
+            <div class="order-item">
+              <div class="order-meta">
+                <span class="order-id">Order #NOVA-7412</span>
+                <span class="order-date">Placed on Aug 28, 2026</span>
+                <span class="order-total">₹2,499</span>
+              </div>
+              <div class="order-details">
+                <strong>Ergonomic Mechanical Keyboard (RGB Brown Switches)</strong>
+                <div class="order-status status-delivered">✅ Delivered on Aug 30</div>
+              </div>
+              <div class="order-actions">
+                <button id="btn-reorder-7412" class="btn-secondary">🔁 Buy Again</button>
+                <button id="btn-review-7412" class="btn-secondary">⭐ Leave Review</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CART TAB -->
+    <section id="tab-cart" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <h3>🛒 Shopping Cart & Express Checkout</h3>
+          <span class="order-total">Subtotal: ₹5,998</span>
+        </div>
+        <div class="card-body">
+          <div class="order-list">
+            <div class="order-item">
+              <div>
+                <strong>Ultra-Fast 100W USB-C GaN Charger</strong>
+                <p>Qty: 1 • ₹2,999</p>
+              </div>
+              <button class="btn-secondary">Remove</button>
+            </div>
+            <div class="order-item">
+              <div>
+                <strong>Aluminum Laptop Cooling Stand</strong>
+                <p>Qty: 1 • ₹2,999</p>
+              </div>
+              <button class="btn-secondary">Remove</button>
+            </div>
+          </div>
+
+          <!-- Checkout Delivery Form for Zero-Leak Vault Testing -->
+          <div class="checkout-form-container" style="margin-top: 24px; padding: 16px; background: #0f172a; border-radius: 8px; border: 1px solid #334155;">
+            <h4 style="margin: 0 0 12px 0; color: #38bdf8;">📦 Shipping & KYC Delivery Details (Test PIXEL NOVA Auto-Fill)</h4>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+              <div>
+                <label style="display: block; font-size: 11px; color: #94a3b8; margin-bottom: 4px;">Recipient Full Name</label>
+                <input type="text" name="full_name" placeholder="Enter recipient name" style="width: 100%; padding: 8px; background: #1e293b; border: 1px solid #475569; color: #fff; border-radius: 6px;" />
+              </div>
+              <div>
+                <label style="display: block; font-size: 11px; color: #94a3b8; margin-bottom: 4px;">Contact Email</label>
+                <input type="email" name="email" placeholder="name@domain.com" style="width: 100%; padding: 8px; background: #1e293b; border: 1px solid #475569; color: #fff; border-radius: 6px;" />
+              </div>
+              <div>
+                <label style="display: block; font-size: 11px; color: #94a3b8; margin-bottom: 4px;">Phone Number</label>
+                <input type="tel" name="phone" placeholder="+91 XXXXX XXXXX" style="width: 100%; padding: 8px; background: #1e293b; border: 1px solid #475569; color: #fff; border-radius: 6px;" />
+              </div>
+              <div>
+                <label style="display: block; font-size: 11px; color: #94a3b8; margin-bottom: 4px;">Aadhaar Verification (Delivery KYC)</label>
+                <input type="text" name="aadhaar" placeholder="12-digit Aadhaar number" style="width: 100%; padding: 8px; background: #1e293b; border: 1px solid #475569; color: #fff; border-radius: 6px;" />
+              </div>
+              <div style="grid-column: span 2;">
+                <label style="display: block; font-size: 11px; color: #94a3b8; margin-bottom: 4px;">Delivery Address</label>
+                <input type="text" name="address" placeholder="Flat, Street, Area" style="width: 100%; padding: 8px; background: #1e293b; border: 1px solid #475569; color: #fff; border-radius: 6px;" />
+              </div>
+              <div>
+                <label style="display: block; font-size: 11px; color: #94a3b8; margin-bottom: 4px;">City</label>
+                <input type="text" name="city" placeholder="City" style="width: 100%; padding: 8px; background: #1e293b; border: 1px solid #475569; color: #fff; border-radius: 6px;" />
+              </div>
+              <div>
+                <label style="display: block; font-size: 11px; color: #94a3b8; margin-bottom: 4px;">Pincode</label>
+                <input type="text" name="pincode" placeholder="Postal PIN" style="width: 100%; padding: 8px; background: #1e293b; border: 1px solid #475569; color: #fff; border-radius: 6px;" />
+              </div>
+            </div>
+          </div>
+
+          <div style="margin-top: 20px; text-align: right;">
+            <button id="btn-proceed-checkout" class="btn-primary" style="padding: 12px 24px; font-size: 16px;" onclick="alert('Proceeding to Checkout with protected payment!')">
+              🔒 Proceed to Secure Checkout
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Deep Navigation Buried Footer -->
+  <footer style="margin-top: 60px; padding: 30px 20px; background: #0b1120; border-top: 1px solid #1e293b; text-align: center; color: #64748b; font-size: 12px;">
+    <div style="display: flex; justify-content: center; gap: 24px; margin-bottom: 12px; flex-wrap: wrap;">
+      <a href="#cancellation" id="link-cancellation" style="color: #94a3b8; text-decoration: none;">Return & Cancellation Policy</a>
+      <a href="#grievance" id="link-support" style="color: #94a3b8; text-decoration: none;">Grievance Redressal & Support</a>
+      <a href="#kyc-compliance" id="link-kyc" style="color: #94a3b8; text-decoration: none;">RBI & UIDAI Data Compliance</a>
+    </div>
+    <p>© 2026 NovaStore India Pvt Ltd. All rights reserved.</p>
+  </footer>
+
+  <script>
+    function showTab(tabName) {
+      document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+      
+      const target = document.getElementById('tab-' + tabName);
+      if (target) target.classList.add('active');
+      
+      const btn = document.getElementById('btn-nav-' + tabName);
+      if (btn) btn.classList.add('active');
+    }
+
+    function triggerSearch() {
+      const input = document.getElementById('site-search');
+      const q = (input ? input.value : '').trim();
+      if (!q) return;
+
+      let banner = document.getElementById('search-result-banner');
+      if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'search-result-banner';
+        banner.style.margin = '16px 0';
+        banner.style.padding = '14px 20px';
+        banner.style.background = 'linear-gradient(90deg, #0284c7, #0369a1)';
+        banner.style.color = '#fff';
+        banner.style.borderRadius = '8px';
+        banner.style.fontWeight = 'bold';
+        banner.style.boxShadow = '0 0 15px rgba(2, 132, 199, 0.5)';
+        banner.style.animation = 'fadeIn 0.3s ease';
+        const main = document.querySelector('main');
+        if (main) main.insertBefore(banner, main.children[1] || main.firstChild);
+      }
+      banner.innerHTML = `🔍 Search Query: "<strong>${q}</strong>" — Enter Keypress Registered! (3 NovaStore products found)`;
+      banner.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    document.getElementById('btn-search')?.addEventListener('click', triggerSearch);
+    document.getElementById('site-search')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        triggerSearch();
+      }
+    });
+  </script>
+</body>
+</html>
+
+
