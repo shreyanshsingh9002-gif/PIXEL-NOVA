@@ -7,7 +7,9 @@ import {
   AgentStep,
   UserVaultProfile,
   PrivacyTelemetryAudit,
-  LocalVisionResult
+  LocalVisionResult,
+  CustomShortcut,
+  ShortcutIconType
 } from "../shared/types";
 import { detectPII, deduplicateEntities } from "../privacy/piiDetector";
 import {
@@ -40,10 +42,134 @@ import {
   CpuIcon,
   CrosshairIcon,
   AlertTriangleIcon,
-  XIcon
+  XIcon,
+  MusicIcon,
+  GlobeIcon,
+  EditIcon,
+  PlusIcon,
+  RotateCcwIcon,
+  SlidersIcon,
+  StarIcon
 } from "./icons";
 
 const BACKEND_URL = "http://127.0.0.1:8000";
+
+export const DEFAULT_SHORTCUTS: CustomShortcut[] = [
+  { id: "sc-1", tag: "Music", act: "Search tum hi ho on spotify", iconName: "music", isFavorite: true },
+  { id: "sc-2", tag: "Cart & Vault", act: "Open carts and auto filling my details", iconName: "cart", isFavorite: true },
+  { id: "sc-3", tag: "E-Com", act: "Open amazon and go to my carts", iconName: "package", isFavorite: true },
+  { id: "sc-4", tag: "Search", act: "Search for laptop and press enter", iconName: "search", isFavorite: true },
+  { id: "sc-5", tag: "Deep Nav", act: "Find Cancellation Policy", iconName: "file", isFavorite: true },
+  { id: "sc-6", tag: "Scroll", act: "Scroll down and click here", iconName: "arrowDown", isFavorite: true },
+  { id: "sc-7", tag: "Scroll", act: "Scroll up", iconName: "arrowUp", isFavorite: false }
+];
+
+const CATEGORY_ALIASES: Record<string, string[]> = {
+  music: ["music", "song", "songs", "spotify", "audio", "track", "gaana", "gana", "play music", "play songs", "spotify song"],
+  "e-com": ["e-com", "ecom", "ecommerce", "shopping", "shop", "amazon", "flipkart", "store", "buy", "cart"],
+  "cart & vault": ["cart", "vault", "checkout", "autofill", "fill details", "details", "credentials"],
+  scroll: ["scroll", "scrolling", "page scroll", "scroll down", "scroll up"],
+  search: ["search", "quick search", "lookup", "find"],
+  "deep nav": ["deep nav", "navigator", "policy", "find policy", "cancellation", "terms"]
+};
+
+function normalizeKey(str: string): string {
+  return (str || "")
+    .toLowerCase()
+    .replace(/[-_&/\\+]/g, " ")
+    .replace(/[.,#!$%\^*;:{}=`~()?"']/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function resolveShortcutKeyword(rawInput: string, shortcutsList: CustomShortcut[]): CustomShortcut | null {
+  if (!rawInput || typeof rawInput !== "string") return null;
+  const raw = rawInput.trim();
+  if (!raw) return null;
+
+  const clean = normalizeKey(raw);
+
+  // Strip common conversational invocation wrappers:
+  // e.g. "play music", "trigger e-com", "open my favorite music", "music shortcut"
+  const stripped = clean
+    .replace(/^(?:please\s+)?(?:play|run|trigger|execute|open|start|activate|my\s+favorite|favorite|favourite|go\s+to|switch\s+to)\s+/i, "")
+    .replace(/\s+(?:shortcut|macro|command|category|routine|please)$/i, "")
+    .trim();
+
+  const searchTerms = Array.from(new Set([clean, stripped])).filter(Boolean);
+  const isExplicitMacroCall = /\b(?:shortcut|macro|category|favorite|favourite|mode|routine)\b/i.test(clean);
+  const wordCount = stripped.split(" ").filter(Boolean).length;
+
+  for (const term of searchTerms) {
+    // 1. Direct match on shortcut Tag / Category
+    const tagMatches = shortcutsList.filter((sc) => {
+      const tagNorm = normalizeKey(sc.tag);
+      if (tagNorm === term) return true;
+
+      // Allow partial match only if input is a concise category invocation (<= 3 words) or explicit macro call
+      if (wordCount <= 3 || isExplicitMacroCall) {
+        if (term.length >= 3 && (tagNorm.split(" ").includes(term) || term.split(" ").includes(tagNorm))) return true;
+
+        // Check category aliases
+        for (const [canonical, aliases] of Object.entries(CATEGORY_ALIASES)) {
+          const canNorm = normalizeKey(canonical);
+          if (tagNorm.includes(canNorm) || canNorm.includes(tagNorm)) {
+            if (aliases.some((a) => normalizeKey(a) === term || normalizeKey(a).split(" ").includes(term))) {
+              return true;
+            }
+          }
+        }
+      }
+      return false;
+    });
+
+    if (tagMatches.length > 0) {
+      // Pick favorite for this category if set, else first candidate
+      const fav = tagMatches.find((s) => s.isFavorite);
+      return fav || tagMatches[0];
+    }
+  }
+
+  // 2. Direct match if the user spoken phrase is the exact action command
+  for (const term of searchTerms) {
+    const actMatches = shortcutsList.filter((sc) => {
+      const actNorm = normalizeKey(sc.act);
+      return actNorm === term || (term.length >= 5 && actNorm.includes(term));
+    });
+    if (actMatches.length > 0) {
+      const fav = actMatches.find((s) => s.isFavorite);
+      return fav || actMatches[0];
+    }
+  }
+
+  return null;
+}
+
+function renderShortcutIcon(name: ShortcutIconType) {
+  switch (name) {
+    case "music":
+      return <MusicIcon size={12} className="chip-svg-icon text-cyan" />;
+    case "globe":
+      return <GlobeIcon size={12} className="chip-svg-icon text-cyan" />;
+    case "search":
+      return <SearchIcon size={12} className="chip-svg-icon text-cyan" />;
+    case "cart":
+      return <ShoppingCartIcon size={12} className="chip-svg-icon text-cyan" />;
+    case "package":
+      return <PackageIcon size={12} className="chip-svg-icon text-cyan" />;
+    case "file":
+      return <FileTextIcon size={12} className="chip-svg-icon text-cyan" />;
+    case "arrowDown":
+      return <ArrowDownIcon size={12} className="chip-svg-icon text-cyan" />;
+    case "arrowUp":
+      return <ArrowUpIcon size={12} className="chip-svg-icon text-cyan" />;
+    case "lock":
+      return <LockIcon size={12} className="chip-svg-icon text-cyan" />;
+    case "zap":
+    default:
+      return <ZapIcon size={12} className="chip-svg-icon text-cyan" />;
+  }
+}
 
 const DEFAULT_VAULT: UserVaultProfile = {
   fullName: "Shreyansh Patel",
@@ -59,6 +185,9 @@ const DEFAULT_VAULT: UserVaultProfile = {
   country: "India",
   pincode: "201309",
   company: "NovaTech Innovations",
+  jobTitle: "Lead AI Engineer",
+  website: "https://pixelnova.dev",
+  notes: "Leave package at front security desk",
   aadhaarMock: "2345 6789 0123",
   panMock: "ABCDE1234F",
   drivingLicenseMock: "DL-0420110012345",
@@ -77,6 +206,131 @@ function extractQueryFromGoal(goal: string): string {
   return g;
 }
 
+function parseSearchIntent(goal: string, currentUrl: string = ""): {
+  query: string;
+  targetSite: string | null;
+  needsNavigation: boolean;
+  navUrl: string | null;
+} {
+  const g = goal.trim();
+  const siteMatch = g.match(
+    /\b(?:in|on)\s+([a-zA-Z0-9.-]+\.[a-zA-Z]{2,}|spotify|youtube|amazon|google|flipkart|github|reddit|wikipedia|twitter|x|cricbuzz|netflix)\b/i
+  );
+
+  let targetSite: string | null = null;
+  if (siteMatch && siteMatch[1]) {
+    targetSite = siteMatch[1].toLowerCase();
+  }
+
+  let query = g
+    .replace(/^(?:please\s+)?(?:search(?:\s+for)?|find|type|look(?:\s+for)?|query)\s+/i, "")
+    .replace(/\s+(?:in|on)\s+([a-zA-Z0-9.-]+\.[a-zA-Z]{2,}|spotify|youtube|amazon|google|flipkart|github|reddit|wikipedia|twitter|x|cricbuzz|netflix)\b.*$/i, "")
+    .replace(/\s+(?:and\s+press\s+enter|and\s+enter)\s*$/i, "")
+    .replace(/^["']|["']$/g, "")
+    .trim();
+
+  let needsNavigation = false;
+  let navUrl: string | null = null;
+
+  if (targetSite) {
+    const isAlreadyOnSite = currentUrl.toLowerCase().includes(targetSite);
+    if (!isAlreadyOnSite) {
+      needsNavigation = true;
+      if (targetSite === "spotify") navUrl = "https://open.spotify.com";
+      else if (targetSite === "youtube") navUrl = "https://www.youtube.com";
+      else if (targetSite === "amazon") navUrl = "https://www.amazon.in";
+      else if (targetSite === "google") navUrl = "https://www.google.com";
+      else if (targetSite === "flipkart") navUrl = "https://www.flipkart.com";
+      else if (targetSite === "github") navUrl = "https://www.github.com";
+      else if (targetSite === "reddit") navUrl = "https://www.reddit.com";
+      else if (targetSite === "wikipedia") navUrl = "https://www.wikipedia.org";
+      else if (targetSite === "netflix") navUrl = "https://www.netflix.com";
+      else if (targetSite === "cricbuzz") navUrl = "https://www.cricbuzz.com";
+      else if (targetSite.includes(".")) navUrl = `https://${targetSite}`;
+    }
+  }
+
+  return { query: query || g, targetSite, needsNavigation, navUrl };
+}
+
+const KNOWN_PLATFORMS: Record<string, { name: string; url: string; defaultAction: "play" | "open" }> = {
+  spotify: { name: "spotify", url: "https://open.spotify.com", defaultAction: "play" },
+  youtube: { name: "youtube", url: "https://www.youtube.com", defaultAction: "play" },
+  amazon: { name: "amazon", url: "https://www.amazon.in", defaultAction: "open" },
+  flipkart: { name: "flipkart", url: "https://www.flipkart.com", defaultAction: "open" },
+  google: { name: "google", url: "https://www.google.com", defaultAction: "open" },
+  wikipedia: { name: "wikipedia", url: "https://www.wikipedia.org", defaultAction: "open" },
+  github: { name: "github", url: "https://www.github.com", defaultAction: "open" },
+  reddit: { name: "reddit", url: "https://www.reddit.com", defaultAction: "open" },
+  netflix: { name: "netflix", url: "https://www.netflix.com", defaultAction: "play" },
+  cricbuzz: { name: "cricbuzz", url: "https://www.cricbuzz.com", defaultAction: "open" },
+  twitter: { name: "twitter", url: "https://twitter.com", defaultAction: "open" },
+  x: { name: "x", url: "https://x.com", defaultAction: "open" }
+};
+
+function decomposeMultitaskingGoal(rawGoal: string, currentUrl: string = ""): string[] | null {
+  if (!rawGoal || typeof rawGoal !== "string") return null;
+  const g = rawGoal.trim();
+  if (!g) return null;
+
+  // If already contains explicit sequencing conjunctions like "and then", let standard splitter handle
+  const hasStrongConjunctions = /\s+(?:and\s+then|then|after\s+that)\s+/i.test(g);
+  if (hasStrongConjunctions) return null;
+
+  const platformNames = Object.keys(KNOWN_PLATFORMS).join("|");
+  // Regex pattern matching: (verb)? (query) (in/on/at/space)? (platform or domain)
+  const pattern = new RegExp(
+    `^(?:please\\s+)?(play|watch|listen|stream|search\\s+for|search|find|open|buy|order)?\\s*['"]?(.+?)['"]?\\s+(?:in|on|at|onto|from|using)?\\s*([a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}|${platformNames})\\s*$`,
+    "i"
+  );
+
+  const match = g.match(pattern);
+  if (!match) return null;
+
+  const verb = (match[1] || "").toLowerCase().trim();
+  let query = (match[2] || "").trim();
+  const rawPlatform = (match[3] || "").toLowerCase().trim();
+
+  query = query.replace(/^for\s+/i, "").trim();
+
+  let platformKey = rawPlatform;
+  for (const k of Object.keys(KNOWN_PLATFORMS)) {
+    if (rawPlatform.includes(k)) {
+      platformKey = k;
+      break;
+    }
+  }
+
+  const platformConfig = KNOWN_PLATFORMS[platformKey];
+  const targetUrl = platformConfig ? platformConfig.url : (rawPlatform.startsWith("http") ? rawPlatform : `https://${rawPlatform}`);
+  const isAlreadyOnPlatform = currentUrl.toLowerCase().includes(platformKey);
+
+  if (!query || query.toLowerCase() === platformKey || query.toLowerCase() === rawPlatform) {
+    return null;
+  }
+
+  const steps: string[] = [];
+
+  // Step 1: Open website if not already on it
+  if (!isAlreadyOnPlatform) {
+    steps.push(`open ${targetUrl}`);
+  }
+
+  // Step 2: Search for the query on that website
+  steps.push(`search for "${query}" in ${platformKey} and press enter`);
+
+  // Step 3: Play or open the top matching result
+  if (verb === "play" || verb === "watch" || verb === "listen" || verb === "stream" || platformConfig?.defaultAction === "play") {
+    steps.push(`play "${query}"`);
+  } else if (verb === "buy" || verb === "order") {
+    steps.push(`open product: ${query} and add to cart`);
+  } else {
+    steps.push(`click "${query}"`);
+  }
+
+  return steps;
+}
+
 function splitCompoundCommand(cmd: string): string[] {
   const normalized = cmd.trim();
   if (!normalized) return [];
@@ -87,10 +341,9 @@ function splitCompoundCommand(cmd: string): string[] {
     return strongParts.map((p) => p.trim()).filter(Boolean);
   }
 
-  // Split on "and" when followed by an action verb or shopping intent:
-  // e.g. "Search Macbook M4 and add to cart", "Find shoes and buy now", "Open amazon and checkout"
+  // Split on "and" when followed by an action verb or shopping/media intent
   const andVerbParts = normalized.split(
-    /\s+and\s+(?=(?:add\s+to\s+cart|add\s+it\s+to\s+cart|buy\s+now|proceed|checkout|open|go\s+to|navigate|visit|auto\s*fill|fill|click|tap|press|scroll|search|type|look|find|submit|track)\b)/i
+    /\s+and\s+(?=(?:add\s+to\s+cart|add\s+it\s+to\s+cart|buy\s+now|proceed|checkout|open|go\s+to|navigate|visit|auto\s*fill|fill|click|tap|press|scroll|search|type|look|find|submit|track|play|watch|listen|stream)\b)/i
   );
   if (andVerbParts.length > 1) {
     return andVerbParts.map((p) => p.trim()).filter(Boolean);
@@ -99,16 +352,50 @@ function splitCompoundCommand(cmd: string): string[] {
   return [normalized];
 }
 
-
 function isDirectVoiceCommand(cmd: string): boolean {
-  return /\b(?:click|tap|press|select|open|go\s+to|scroll|auto\s*fill|fill|search|type|find|look\s+for|buy|pay|checkout|order)\b/i.test(
+  return /\b(?:click|tap|press|select|open|go\s+to|navigate|visit|browse|scroll|auto\s*fill|fill|search|type|find|look\s+for|buy|pay|checkout|order|play|watch|listen|stream)\b/i.test(
     cmd
-  );
+  ) || /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(\/[^\s]*)?$/i.test(cmd.trim()) || /^https?:\/\//i.test(cmd.trim());
+}
+
+function extractNavigationTarget(subGoal: string): string | null {
+  const s = subGoal.trim();
+  if (/\b(?:cart|carts|my\s+cart|order|orders|menu|modal|popup|dropdown|accordion|tab)\b/i.test(s)) return null;
+  const urlMatch = s.match(/(?:https?:\/\/[^\s'"]+)/i);
+  if (urlMatch) return urlMatch[0];
+  const navPattern = /^(?:please\s+)?(?:open|go\s+to|navigate(?:\s+to)?|visit|browse(?:\s+to)?)\s+(?:the\s+(?:website|site|page|url)\s+)?['"]?([^'"]+?)['"]?$/i;
+  const match = s.match(navPattern);
+  if (match && match[1]) {
+    const raw = match[1].trim();
+    if (!raw || /^(?:cart|carts|my\s+cart|order|orders|form|details|here|there)$/i.test(raw)) return null;
+    return raw;
+  }
+  if (/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(\/[^\s]*)?$/i.test(s)) return s;
+  return null;
+}
+
+function extractInFlightAutofillData(prompt: string): Record<string, string> | undefined {
+  const customData: Record<string, string> = {};
+  const kvRegex = /(?:set|fill|with\s+)?([a-zA-Z\s_-]+?)\s*(?:=|:|\bas\b|\bto\b)\s*['"]?([^,;]+?)['"]?(?:,|$|\sand\s)/gi;
+  let match: RegExpExecArray | null;
+  while ((match = kvRegex.exec(prompt)) !== null) {
+    const rawKey = match[1].trim().toLowerCase().replace(/^(?:and|with|set|fill|the)\s+/, "");
+    const val = match[2].trim();
+    if (rawKey && val && !["a", "an", "the", "my", "auto", "in"].includes(rawKey) && rawKey.length < 30) {
+      customData[rawKey] = val;
+    }
+  }
+  return Object.keys(customData).length > 0 ? customData : undefined;
 }
 
 function extractTargetTextFromGoal(subGoal: string): { targetText?: string; isHereThere: boolean } {
   const isHereThere = /\b(?:click|tap|press)\s+(?:here|there)\b/i.test(subGoal);
   if (isHereThere) return { isHereThere: true };
+
+  // If subGoal is a media playback command (e.g. 'play "tum hi ho"' or 'play banjaara')
+  if (/\b(?:play|watch|listen(?:\s+to)?|stream)\b/i.test(subGoal)) {
+    return { targetText: subGoal.trim(), isHereThere: false };
+  }
 
   let clean = subGoal
     .replace(/^\s*(?:please\s+)?/i, "")
@@ -151,73 +438,168 @@ export function SidePanel() {
   const [error, setError] = useState<string>("");
   const [isScanningEntities, setIsScanningEntities] = useState(false);
 
+  // Customizable Macro Shortcuts
+  const [shortcuts, setShortcuts] = useState<CustomShortcut[]>(DEFAULT_SHORTCUTS);
+  const [isEditingShortcuts, setIsEditingShortcuts] = useState(false);
+  const [editingShortcutId, setEditingShortcutId] = useState<string | null>(null);
+  const [formTag, setFormTag] = useState("");
+  const [formAct, setFormAct] = useState("");
+  const [formIcon, setFormIcon] = useState<ShortcutIconType>("music");
+  const [formIsFavorite, setFormIsFavorite] = useState(false);
+
   const isRunningRef = useRef(false);
 
-  // Load vault from chrome.storage.local
+  // Load vault and custom shortcuts from chrome.storage.local
   useEffect(() => {
     if (typeof chrome !== "undefined" && chrome.storage?.local) {
-      chrome.storage.local.get(["pixelNovaVault"], (res) => {
+      chrome.storage.local.get(["pixelNovaVault", "pixelNovaShortcuts"], (res) => {
         if (res?.pixelNovaVault) {
           setVault(res.pixelNovaVault);
+        }
+        if (res?.pixelNovaShortcuts && Array.isArray(res.pixelNovaShortcuts) && res.pixelNovaShortcuts.length > 0) {
+          setShortcuts(res.pixelNovaShortcuts);
         }
       });
     }
   }, []);
 
-  // Listen for captured voice transcript from voice.html bridge window
+  // Listen for Voice Commander captures from popup
   useEffect(() => {
-    const handleVoiceMessage = (msg: any) => {
+    const handleVoiceCaptured = (msg: any) => {
       if (msg?.type === "VOICE_INPUT_CAPTURED" && msg.text) {
-        setGoal(msg.text);
-        updateStatus(`Voice Command: "${msg.text}"`);
-        if (msg.autoRun) {
-          setTimeout(() => {
-            executeVoiceOrCompoundGoal(msg.text);
-          }, 300);
+        const spoken = msg.text.trim();
+        const matchedMacro = resolveShortcutKeyword(spoken, shortcuts);
+        if (matchedMacro) {
+          const macroCmd = matchedMacro.act;
+          updateStatus(`🎤 Spoke: "${spoken}" → Triggered Favorite [${matchedMacro.tag}] Macro!`);
+          setGoal(macroCmd);
+          runAutonomousLoop(macroCmd);
+        } else {
+          setGoal(spoken);
+          if (msg.autoRun) {
+            runAutonomousLoop(spoken);
+          }
         }
       }
     };
+
     if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
-      chrome.runtime.onMessage.addListener(handleVoiceMessage);
-      return () => chrome.runtime.onMessage.removeListener(handleVoiceMessage);
+      chrome.runtime.onMessage.addListener(handleVoiceCaptured);
     }
-  }, [vault]);
+    return () => {
+      if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
+        chrome.runtime.onMessage.removeListener(handleVoiceCaptured);
+      }
+    };
+  }, [shortcuts]);
 
-  // Auto-scan page when SidePanel opens
-  useEffect(() => {
-    observeAndProtect().catch((e) => {
-      console.log("Deferred initial page scan:", e);
-    });
-  }, []);
-
-  // Auto-scan when switching to entities tab if not scanned yet
-  useEffect(() => {
-    if (activeTab === "entities" && !sanitizedContext && !isRunningRef.current) {
-      handleScanEntities();
-    }
-  }, [activeTab]);
-
-  async function handleScanEntities() {
-    try {
-      setIsScanningEntities(true);
-      updateStatus("Local Firewall: Scanning active page for sensitive PII entities...");
-      await observeAndProtect();
-    } catch (err) {
-      console.warn("[PIXEL NOVA] Scan entities error:", err);
-      setError((err as Error).message || "Scan failed. Please reload the active tab.");
-    } finally {
-      setIsScanningEntities(false);
+  function persistShortcuts(newList: CustomShortcut[]) {
+    setShortcuts(newList);
+    if (typeof chrome !== "undefined" && chrome.storage?.local) {
+      chrome.storage.local.set({ pixelNovaShortcuts: newList });
     }
   }
 
-  const categorizedActions = [
-    { tag: "Cart & Vault", act: "Open carts and auto filling my details", icon: <ShoppingCartIcon size={12} className="chip-svg-icon text-cyan" /> },
-    { tag: "E-Com", act: "Open amazon and go to my carts", icon: <PackageIcon size={12} className="chip-svg-icon text-cyan" /> },
-    { tag: "Search", act: "Search for laptop and press enter", icon: <SearchIcon size={12} className="chip-svg-icon text-cyan" /> },
-    { tag: "Deep Nav", act: "Find Cancellation Policy", icon: <FileTextIcon size={12} className="chip-svg-icon text-cyan" /> },
-    { tag: "Scroll", act: "Scroll down and click here", icon: <ArrowDownIcon size={12} className="chip-svg-icon text-cyan" /> },
-    { tag: "Scroll", act: "Scroll up", icon: <ArrowUpIcon size={12} className="chip-svg-icon text-cyan" /> }
-  ];
+  function handleDeleteShortcut(id: string, e: React.MouseEvent) {
+    e.stopPropagation();
+    const updated = shortcuts.filter((s) => s.id !== id);
+    persistShortcuts(updated);
+    if (editingShortcutId === id) {
+      handleCancelEdit();
+    }
+    updateStatus("Shortcut removed from dock.");
+  }
+
+  function handleToggleFavorite(id: string, e: React.MouseEvent) {
+    e.stopPropagation();
+    const target = shortcuts.find((s) => s.id === id);
+    if (!target) return;
+    const nextFav = !target.isFavorite;
+    const targetTag = normalizeKey(target.tag);
+
+    const updated = shortcuts.map((s) => {
+      if (s.id === id) return { ...s, isFavorite: nextFav };
+      // Keep single favorite per category
+      if (nextFav && normalizeKey(s.tag) === targetTag) {
+        return { ...s, isFavorite: false };
+      }
+      return s;
+    });
+
+    persistShortcuts(updated);
+    updateStatus(nextFav ? `⭐ Set "${target.tag}" as favorite macro!` : `Removed favorite status from "${target.tag}".`);
+  }
+
+  function handleStartEdit(shortcut: CustomShortcut) {
+    setEditingShortcutId(shortcut.id);
+    setFormTag(shortcut.tag);
+    setFormAct(shortcut.act);
+    setFormIcon(shortcut.iconName);
+    setFormIsFavorite(shortcut.isFavorite ?? false);
+    updateStatus(`Editing shortcut "${shortcut.tag}"`);
+  }
+
+  function handleCancelEdit() {
+    setEditingShortcutId(null);
+    setFormTag("");
+    setFormAct("");
+    setFormIcon("music");
+    setFormIsFavorite(false);
+  }
+
+  function handleSaveShortcut() {
+    if (!formTag.trim() || !formAct.trim()) {
+      setError("Please provide both a Category/Tag and an Action Command.");
+      return;
+    }
+    const tagNorm = normalizeKey(formTag);
+
+    if (editingShortcutId) {
+      const updated = shortcuts.map((s) => {
+        if (s.id === editingShortcutId) {
+          return {
+            ...s,
+            tag: formTag.trim(),
+            act: formAct.trim(),
+            iconName: formIcon,
+            isFavorite: formIsFavorite
+          };
+        }
+        if (formIsFavorite && normalizeKey(s.tag) === tagNorm) {
+          return { ...s, isFavorite: false };
+        }
+        return s;
+      });
+      persistShortcuts(updated);
+      updateStatus(`Updated shortcut: "${formTag.trim()}"`);
+      handleCancelEdit();
+    } else {
+      const newShortcut: CustomShortcut = {
+        id: "sc-" + Date.now(),
+        tag: formTag.trim(),
+        act: formAct.trim(),
+        iconName: formIcon,
+        isFavorite: formIsFavorite
+      };
+      const updated = [
+        ...shortcuts.map((s) =>
+          formIsFavorite && normalizeKey(s.tag) === tagNorm ? { ...s, isFavorite: false } : s
+        ),
+        newShortcut
+      ];
+      persistShortcuts(updated);
+      updateStatus(`Added new shortcut: "${formTag.trim()}"`);
+      setFormTag("");
+      setFormAct("");
+      setFormIsFavorite(false);
+    }
+  }
+
+  function handleResetDefaultShortcuts() {
+    persistShortcuts(DEFAULT_SHORTCUTS);
+    handleCancelEdit();
+    updateStatus("Reset all shortcuts to default macros.");
+  }
 
   function speakNarration(text: string) {
     if (!voiceNarration || !("speechSynthesis" in window)) return;
@@ -268,7 +650,7 @@ export function SidePanel() {
     }
   }
 
-  async function handleAutoFillForm() {
+  async function handleAutoFillForm(customData?: Record<string, string>) {
     updateStatus("Local Vault: Injecting credentials on-device (0% network leak)...");
     try {
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -277,11 +659,14 @@ export function SidePanel() {
 
       const res = await chrome.tabs.sendMessage(activeTab.id, {
         type: "AUTOFILL_FORM",
-        profile: vault
+        profile: vault,
+        customData
       });
 
       if (res?.success) {
-        const notice = `Auto-filled ${res.filledCount} fields directly on-device! (0 Bytes sent to cloud)`;
+        const customCount = customData ? Object.keys(customData).length : 0;
+        const extraNote = customCount > 0 ? ` (with ${customCount} custom inputs)` : "";
+        const notice = `Auto-filled ${res.filledCount} fields directly on-device!${extraNote} (0 Bytes sent to cloud)`;
         setAutofillNotice(notice);
         updateStatus(`✅ ${notice}`);
         setSteps((prev) => [
@@ -291,7 +676,8 @@ export function SidePanel() {
             timestamp: Date.now(),
             goal: "Auto-Fill Form via Local Privacy Vault",
             action: {
-              action: "type",
+              action: "autofill",
+              customFillData: customData,
               thought: `Matched and populated ${res.filledCount} fields (${res.fields?.join(", ")}) locally on-device. Zero network transmission.`
             },
             status: "completed",
@@ -535,6 +921,56 @@ export function SidePanel() {
     const goalLower = userGoal.toLowerCase();
     const dynamicQuery = extractQueryFromGoal(userGoal);
 
+    // 1. Universal Navigation
+    const navTarget = extractNavigationTarget(userGoal);
+    if (navTarget) {
+      return {
+        action: "navigate",
+        value: navTarget,
+        thought: `Universal Autonomous Agent: Navigating to '${navTarget}'`
+      };
+    }
+
+    // 2. Universal Form Autofill
+    if (/\b(?:auto\s*fill|fill\s*(?:my\s*)?(?:details|form|data|credentials|address|kyc|info)|populate\s*form)\b/i.test(userGoal)) {
+      return {
+        action: "autofill",
+        customFillData: extractInFlightAutofillData(userGoal),
+        thought: "Universal Autonomous Agent: Auto-filling form fields via Zero-Leak Privacy Vault"
+      };
+    }
+
+    // 3. Page Scrolling
+    if (/\b(?:scroll|page)\s*(down|up|to\s+top|to\s+bottom|top|bottom)?\b/i.test(userGoal)) {
+      const dirMatch = userGoal.match(/\b(down|up|top|bottom)\b/i);
+      let direction: "up" | "down" | "top" | "bottom" = "down";
+      if (dirMatch) {
+        const d = dirMatch[1].toLowerCase();
+        if (d === "up") direction = "up";
+        else if (d === "top") direction = "top";
+        else if (d === "bottom") direction = "bottom";
+      }
+      return {
+        action: "scroll",
+        direction,
+        amount: 550,
+        thought: `Universal Autonomous Agent: Scrolling page ${direction} smoothly`
+      };
+    }
+
+    // 4. Keyboard Key Press (e.g. Enter, Tab, Escape)
+    if (/\b(?:press|hit)\s+(enter|tab|escape|esc|backspace)\b/i.test(userGoal)) {
+      const keyMatch = userGoal.match(/\b(enter|tab|escape|esc|backspace)\b/i);
+      const rawKey = keyMatch ? keyMatch[1].toLowerCase() : "enter";
+      const keyName = rawKey === "enter" ? "Enter" : rawKey === "tab" ? "Tab" : rawKey.startsWith("esc") ? "Escape" : "Backspace";
+      return {
+        action: "press_key",
+        keyName,
+        thought: `Universal Autonomous Agent: Triggering '${keyName}' key press`
+      };
+    }
+
+    // 5. Orders & Package Tracking
     if (goalLower.includes("order")) {
       const orderBtn = context.safeElements.find((e) =>
         /recent orders|orders|track package|track delivery/i.test(
@@ -551,6 +987,7 @@ export function SidePanel() {
       }
     }
 
+    // 6. Search Input Matching
     if (goalLower.includes("search") || goalLower.includes("type") || goalLower.includes("find")) {
       const searchInput = context.safeElements.find(
         (e) => e.tag === "input" && /search|input|query|text|q/i.test(`${e.id} ${e.name || ""} ${e.placeholder || ""}`)
@@ -561,12 +998,13 @@ export function SidePanel() {
           targetIndex: searchInput.index,
           selector: searchInput.selector,
           value: dynamicQuery,
-          thought: `Found search input. Typing '${dynamicQuery}'.`
+          pressEnter: true,
+          thought: `Found search input. Typing '${dynamicQuery}' and pressing Enter.`
         };
       }
     }
 
-    // General semantic element match across all safe elements
+    // 7. General semantic element match across all safe elements
     const cleanGoal = userGoal
       .replace(/\b(?:click|tap|press|select|open|go\s+to|button|btn|link|tab|card|the|on|kro|karo|pe|waale|wale)\b/gi, " ")
       .trim()
@@ -596,6 +1034,14 @@ export function SidePanel() {
       }
 
       if (bestEl && highestScore >= 35) {
+        if (bestEl.tag === "select") {
+          return {
+            action: "select",
+            targetIndex: bestEl.index,
+            selector: bestEl.selector,
+            thought: `Local Semantic Match: Selecting option in '${bestEl.text || bestEl.name}'.`
+          };
+        }
         return {
           action: "click",
           targetIndex: bestEl.index,
@@ -633,7 +1079,17 @@ export function SidePanel() {
     setError("");
     updateStatus(`Processing Pipeline: "${rawGoal}"`);
 
-    const subGoals = splitCompoundCommand(rawGoal);
+    let currentTabUrl = "";
+    try {
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      currentTabUrl = tabs[0]?.url || "";
+    } catch (e) {}
+
+    const multitaskSubgoals = decomposeMultitaskingGoal(rawGoal, currentTabUrl);
+    const subGoals = multitaskSubgoals && multitaskSubgoals.length > 0
+      ? multitaskSubgoals
+      : splitCompoundCommand(rawGoal);
+
     let stepNumber = 0;
 
     try {
@@ -676,49 +1132,53 @@ export function SidePanel() {
           continue;
         }
 
-        // 2. AUTO-FILL VAULT CREDENTIALS
-        if (/\b(?:auto\s*fill|fill\s*(?:my\s*)?(?:details|form|data|credentials|address|kyc)|populate\s*form)\b/i.test(subGoal)) {
-          await handleAutoFillForm();
+        // 2. AUTO-FILL VAULT CREDENTIALS & IN-FLIGHT CUSTOM DATA
+        if (/\b(?:auto\s*fill|fill\s*(?:my\s*)?(?:details|form|data|credentials|address|kyc|info)|populate\s*form)\b/i.test(subGoal)) {
+          const customData = extractInFlightAutofillData(subGoal);
+          await handleAutoFillForm(customData);
           await new Promise((r) => setTimeout(r, 900));
+          await observeAndProtect().catch(() => {});
           continue;
         }
 
-        // 3. NAVIGATION (e.g. Open Amazon, Open Google, Open Flipkart)
-        const navMatch = subGoal.match(
-          /\b(?:open|go\s+to|navigate\s+to|visit)\s+([a-zA-Z0-9.-]+\.[a-zA-Z]{2,}|amazon|google|flipkart|youtube|github|reddit|wikipedia)\b/i
-        );
-        if (navMatch && navMatch[1]) {
-          const domain = navMatch[1].toLowerCase();
-          let targetUrl = domain;
-          if (domain === "amazon") targetUrl = "https://www.amazon.in";
-          else if (domain === "google") targetUrl = "https://www.google.com";
-          else if (domain === "flipkart") targetUrl = "https://www.flipkart.com";
-          else if (domain === "youtube") targetUrl = "https://www.youtube.com";
-          else if (domain === "github") targetUrl = "https://www.github.com";
-          else if (!domain.startsWith("http")) targetUrl = `https://www.${domain}`;
+        // 3. UNIVERSAL WEB NAVIGATION (ANY website, URL, domain, or keyword search)
+        const navTarget = extractNavigationTarget(subGoal);
+        if (navTarget) {
+          updateStatus(`🌐 Navigating to "${navTarget}" via Universal Background Gateway...`);
+          try {
+            const navRes = await chrome.runtime.sendMessage({
+              type: "NAVIGATE_TAB",
+              url: navTarget
+            });
 
-          const navAction: AgentAction = {
-            action: "navigate",
-            value: targetUrl,
-            thought: `Voice Command: Navigating to ${domain} (${targetUrl})`
-          };
+            const finalUrl = navRes?.url || navTarget;
+            setSteps((prev) => [
+              ...prev,
+              {
+                stepIndex: prev.length + 1,
+                timestamp: Date.now(),
+                goal: subGoal,
+                action: {
+                  action: "navigate",
+                  value: finalUrl,
+                  thought: `Universal Autonomous Agent: Navigated to ${finalUrl}`
+                },
+                status: navRes?.success ? "completed" : "failed",
+                result: navRes?.success ? `Opened & Ready: ${finalUrl}` : (navRes?.error || "Navigation failed")
+              }
+            ]);
 
-          const res = await executeActionInTab(navAction);
-          setSteps((prev) => [
-            ...prev,
-            {
-              stepIndex: prev.length + 1,
-              timestamp: Date.now(),
-              goal: subGoal,
-              action: navAction,
-              status: res.success ? "completed" : "failed",
-              result: res.result || `Navigated to ${targetUrl}`
-            }
-          ]);
-          updateStatus(`🌐 Navigating to ${targetUrl}... Waiting for page load.`);
-          await new Promise((r) => setTimeout(r, 2800));
-          await observeAndProtect().catch(() => {});
-          continue;
+            updateStatus(`🔒 New page opened (${finalUrl}). Activating On-Device Privacy Shield...`);
+            await new Promise((r) => setTimeout(r, 800));
+            // Sensitive info hide is TOP PRIORITY: Scan & mask new page immediately!
+            await observeAndProtect().catch((err) => {
+              console.warn("Privacy shield activation on new tab:", err);
+            });
+            continue;
+          } catch (navErr) {
+            console.warn("Navigation error:", navErr);
+            setError((navErr as Error).message || "Navigation failed.");
+          }
         }
 
         // 4. CART SHORTCUT (e.g. "open carts", "go to my carts", "open cart")
@@ -850,15 +1310,36 @@ export function SidePanel() {
 
 
 
-        // 5. SEARCH & TYPE WITH ENTER
+        // 5. UNIVERSAL SAME-SITE & CROSS-SITE SEARCH
         if (/\b(?:search(?:\s+for)?|type|look\s+for|query)\b/i.test(subGoal)) {
-          const query = extractQueryFromGoal(subGoal);
+          let currentTabUrl = "";
+          try {
+            const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+            currentTabUrl = tabs[0]?.url || "";
+          } catch (e) {}
+
+          const searchIntent = parseSearchIntent(subGoal, currentTabUrl);
+
+          // If user directed search to another site while not currently on that site
+          if (searchIntent.needsNavigation && searchIntent.navUrl) {
+            updateStatus(`🌐 Navigating to ${searchIntent.targetSite || "destination"} (${searchIntent.navUrl})...`);
+            await chrome.runtime.sendMessage({
+              type: "NAVIGATE_TAB",
+              url: searchIntent.navUrl
+            });
+            await new Promise((r) => setTimeout(r, 900));
+            await observeAndProtect().catch(() => {});
+          }
+
+          const query = searchIntent.query || extractQueryFromGoal(subGoal);
           const searchAction: AgentAction = {
             action: "type",
             value: query,
             pressEnter: true,
-            thought: `Voice Command: Searching for '${query}' and pressing Enter`
+            thought: `Universal Site Search: Locating search bar on active site and searching for '${query}'`
           };
+
+          updateStatus(`🔍 Searching for "${query}" in the active site's search bar...`);
           const res = await executeActionInTab(searchAction);
           setSteps((prev) => [
             ...prev,
@@ -868,16 +1349,18 @@ export function SidePanel() {
               goal: subGoal,
               action: searchAction,
               status: res.success ? "completed" : "failed",
-              result: res.result || `Searched for ${query} with Enter`
+              result: res.result || (res.success ? `Searched for "${query}" in active site search bar` : res.error)
             }
           ]);
-          await new Promise((r) => setTimeout(r, 1200));
+          const nextSubGoal = subGoals[i + 1];
+          const waitMs = nextSubGoal && /\b(?:play|click|open|watch|listen|select)\b/i.test(nextSubGoal) ? 2400 : 1200;
+          await new Promise((r) => setTimeout(r, waitMs));
           await observeAndProtect().catch(() => {});
           continue;
         }
 
-        // 6. CLICK (e.g. "click here", "click there", "click track package", "click proceed to checkout", "click buy now", "buy now", "click add to cart", "add to cart")
-        if (/\b(?:click|tap|press|select|open|go\s+to|buy|pay|checkout|order|add\s*(?:it\s*)?to\s*cart|add\s*cart)\b/i.test(subGoal)) {
+        // 6. CLICK & PLAY (e.g. "play 'tum hi ho'", "play banjaara", "click here", "add to cart", "open", "select")
+        if (/\b(?:click|tap|press|select|open|go\s+to|buy|pay|checkout|order|add\s*(?:it\s*)?to\s*cart|add\s*cart|play|watch|listen|stream)\b/i.test(subGoal)) {
           const { targetText, isHereThere } = extractTargetTextFromGoal(subGoal);
 
           let cleanTarget = targetText;
@@ -889,6 +1372,8 @@ export function SidePanel() {
             targetText: cleanTarget,
             thought: isHereThere
               ? "Voice Command: Clicking active or primary element"
+              : /\b(?:play|watch|listen|stream)\b/i.test(subGoal)
+              ? `Media Playback: Playing '${cleanTarget}'`
               : `Executing click on '${cleanTarget || "target element"}'`
           };
 
@@ -954,7 +1439,33 @@ export function SidePanel() {
           const brainAction = await requestBrainPlan(sanitized, subGoal);
           const safety = validateActionSafety(brainAction, sanitized.safeElements);
           if (safety.isSafe && !safety.requiresUserConfirmation) {
-            const res = await executeActionInTab(brainAction);
+            let execSuccess = false;
+            let execResult = "";
+            let execError = "";
+
+            if (brainAction.action === "navigate" && brainAction.value) {
+              updateStatus(`🌐 Navigating to ${brainAction.value}...`);
+              const navRes = await chrome.runtime.sendMessage({
+                type: "NAVIGATE_TAB",
+                url: brainAction.value
+              });
+              execSuccess = !!navRes?.success;
+              execResult = navRes?.success ? `Navigated to ${navRes.url || brainAction.value}` : (navRes?.error || "Navigation failed");
+              await new Promise((r) => setTimeout(r, 800));
+              await observeAndProtect().catch(() => {});
+            } else if (brainAction.action === "autofill") {
+              await handleAutoFillForm(brainAction.customFillData);
+              execSuccess = true;
+              execResult = "Autofilled credentials from Zero-Leak Vault";
+              await new Promise((r) => setTimeout(r, 800));
+              await observeAndProtect().catch(() => {});
+            } else {
+              const res = await executeActionInTab(brainAction);
+              execSuccess = res.success;
+              execResult = res.result || brainAction.thought || "";
+              execError = res.error || "";
+            }
+
             setSteps((prev) => [
               ...prev,
               {
@@ -962,8 +1473,9 @@ export function SidePanel() {
                 timestamp: Date.now(),
                 goal: subGoal,
                 action: brainAction,
-                status: res.success ? "completed" : "failed",
-                result: res.result || brainAction.thought
+                status: execSuccess ? "completed" : "failed",
+                result: execResult,
+                error: execError
               }
             ]);
           } else if (safety.requiresUserConfirmation) {
@@ -986,16 +1498,26 @@ export function SidePanel() {
     }
   }
 
-  async function runAutonomousLoop() {
-    // If compound command or fast-path voice command, run the compound pipeline directly
-    if (splitCompoundCommand(goal).length > 1 || isDirectVoiceCommand(goal)) {
-      await executeVoiceOrCompoundGoal(goal);
+  async function runAutonomousLoop(overrideGoal?: string) {
+    let currentGoal = (overrideGoal !== undefined ? overrideGoal : goal).trim();
+
+    // Check if goal is a category keyword trigger! (e.g. "MUSIC", "play music", "e-com", "scroll")
+    const matchedMacro = resolveShortcutKeyword(currentGoal, shortcuts);
+    if (matchedMacro) {
+      updateStatus(`⭐ Voice/Keyword "${currentGoal}" → Triggered Favorite [${matchedMacro.tag}] Macro: "${matchedMacro.act}"`);
+      setGoal(matchedMacro.act);
+      currentGoal = matchedMacro.act;
+    }
+
+    // If multitasking compound command, or compound command, or fast-path voice command, run the compound pipeline directly
+    if (decomposeMultitaskingGoal(currentGoal) || splitCompoundCommand(currentGoal).length > 1 || isDirectVoiceCommand(currentGoal)) {
+      await executeVoiceOrCompoundGoal(currentGoal);
       return;
     }
 
     // If goal mentions finding hidden policy/link, first try deep search
-    if (/\b(?:policy|privacy|terms|cancellation|refund|contact|support|kyc)\b/i.test(goal)) {
-      const match = goal.match(/\b(?:find|locate|search for)?\s*([a-z\s]+(?:policy|terms|cancellation|refund|support|kyc))\b/i);
+    if (/\b(?:policy|privacy|terms|cancellation|refund|contact|support|kyc)\b/i.test(currentGoal)) {
+      const match = currentGoal.match(/\b(?:find|locate|search for)?\s*([a-z\s]+(?:policy|terms|cancellation|refund|support|kyc))\b/i);
       if (match && match[1]) {
         handleDeepSearch(match[1].trim());
         return;
@@ -1020,7 +1542,7 @@ export function SidePanel() {
           break;
         }
 
-        const proposedAction = await requestBrainPlan(sanitized, goal);
+        const proposedAction = await requestBrainPlan(sanitized, currentGoal);
 
         updateStatus(`Step ${stepCount}: Local Validator checking action safety...`);
         const safety = validateActionSafety(proposedAction, sanitized.safeElements);
@@ -1042,7 +1564,7 @@ export function SidePanel() {
             {
               stepIndex: prev.length + 1,
               timestamp: Date.now(),
-              goal,
+              goal: currentGoal,
               action: proposedAction,
               status: "completed",
               result: proposedAction.thought || "Goal achieved!"
@@ -1050,6 +1572,37 @@ export function SidePanel() {
           ]);
           updateStatus("Task completed successfully!");
           break;
+        }
+
+        if (proposedAction.action === "navigate" && proposedAction.value) {
+          updateStatus(`🌐 Universal Gateway: Navigating to ${proposedAction.value}...`);
+          const navRes = await chrome.runtime.sendMessage({
+            type: "NAVIGATE_TAB",
+            url: proposedAction.value
+          });
+          setSteps((prev) => [
+            ...prev,
+            {
+              stepIndex: prev.length + 1,
+              timestamp: Date.now(),
+              goal: currentGoal,
+              action: proposedAction,
+              status: navRes?.success ? "completed" : "failed",
+              result: navRes?.success ? `Navigated to ${navRes.url || proposedAction.value}` : (navRes?.error || "Navigation failed")
+            }
+          ]);
+          updateStatus(`🔒 Protecting sensitive info on new page...`);
+          await new Promise((r) => setTimeout(r, 800));
+          await observeAndProtect().catch(() => {});
+          continue;
+        }
+
+        if (proposedAction.action === "autofill") {
+          updateStatus(`Local Vault: Auto-filling form fields...`);
+          await handleAutoFillForm(proposedAction.customFillData);
+          await new Promise((r) => setTimeout(r, 800));
+          await observeAndProtect().catch(() => {});
+          continue;
         }
 
         updateStatus(`Step ${stepCount}: Executing '${proposedAction.action}'...`);
@@ -1060,7 +1613,7 @@ export function SidePanel() {
           {
             stepIndex: prev.length + 1,
             timestamp: Date.now(),
-            goal,
+            goal: currentGoal,
             action: proposedAction,
             status: execResult.success ? "completed" : "failed",
             result: execResult.result,
@@ -1345,24 +1898,246 @@ export function SidePanel() {
           </div>
         </div>
 
-        {/* CATEGORIZED PLAYBOOK CHIPS */}
-        <div className="chip-scroll-wrapper">
-          <div className="chip-row">
-            {categorizedActions.map((item, i) => (
+        {/* CUSTOMIZABLE MACRO SHORTCUTS HEADER */}
+        <div className="shortcut-section-header">
+          <div className="shortcut-header-left">
+            <SlidersIcon size={12} className="text-cyan" />
+            <span className="shortcut-section-title">AUTONOMOUS MACROS</span>
+            <span className="shortcut-count-pill">{shortcuts.length}</span>
+          </div>
+          <div className="shortcut-header-right">
+            <button
+              type="button"
+              className={`btn-manage-shortcuts ${isEditingShortcuts ? "active" : ""}`}
+              onClick={() => {
+                const next = !isEditingShortcuts;
+                setIsEditingShortcuts(next);
+                if (!next) handleCancelEdit();
+                updateStatus(next ? "Macro editor opened. Click × to delete, click chip to edit." : "Macro editor closed.");
+              }}
+              title={isEditingShortcuts ? "Close macro editor" : "Customize, add, or delete shortcut commands"}
+            >
+              {isEditingShortcuts ? (
+                <>
+                  <CheckCircleIcon size={11} className="text-emerald" />
+                  <span>Done</span>
+                </>
+              ) : (
+                <>
+                  <EditIcon size={11} />
+                  <span>Edit Macros</span>
+                </>
+              )}
+            </button>
+            {isEditingShortcuts && (
               <button
-                key={i}
-                className="quick-chip"
-                onClick={() => setGoal(item.act)}
-                disabled={isRunning}
-                title={item.act}
+                type="button"
+                className="btn-shortcut-reset-mini"
+                onClick={handleResetDefaultShortcuts}
+                title="Restore default shortcut macros"
               >
-                <span>{item.icon}</span>
-                <span className="chip-tag">{item.tag}</span>
-                <span>{item.act}</span>
+                <RotateCcwIcon size={11} />
+                <span>Reset</span>
               </button>
-            ))}
+            )}
           </div>
         </div>
+
+        {/* CUSTOM SHORTCUT CHIPS ROW */}
+        <div className="chip-scroll-wrapper">
+          <div className="chip-row">
+            {shortcuts.map((item) => (
+              <div key={item.id} className="quick-chip-wrapper">
+                <button
+                  type="button"
+                  className={`quick-chip ${isEditingShortcuts ? "editable-chip" : ""} ${editingShortcutId === item.id ? "editing-active" : ""}`}
+                  onClick={() => {
+                    if (isEditingShortcuts) {
+                      handleStartEdit(item);
+                    } else {
+                      setGoal(item.act);
+                    }
+                  }}
+                  disabled={isRunning}
+                  title={isEditingShortcuts ? `Click to edit: "${item.tag}"` : item.act}
+                >
+                  <span className="chip-icon-slot">{renderShortcutIcon(item.iconName)}</span>
+                  <span className="chip-tag">{item.tag}</span>
+                  <span className="chip-act">{item.act}</span>
+                  {item.isFavorite && (
+                    <span className="chip-fav-badge" title="Category Favorite Macro (Voice Keyword Activated)">
+                      <StarIcon size={10} className="text-gold" />
+                    </span>
+                  )}
+                  {isEditingShortcuts && (
+                    <span className="chip-edit-badge" title="Edit this shortcut">
+                      <EditIcon size={9} />
+                    </span>
+                  )}
+                </button>
+                {isEditingShortcuts && (
+                  <>
+                    <button
+                      type="button"
+                      className={`chip-fav-toggle-btn ${item.isFavorite ? "active" : ""}`}
+                      onClick={(e) => handleToggleFavorite(item.id, e)}
+                      title={item.isFavorite ? `Remove category favorite from "${item.tag}"` : `Set "${item.tag}" as category favorite macro`}
+                    >
+                      <StarIcon size={9} />
+                    </button>
+                    <button
+                      type="button"
+                      className="chip-delete-btn"
+                      onClick={(e) => handleDeleteShortcut(item.id, e)}
+                      title={`Delete "${item.tag}" shortcut`}
+                    >
+                      <XIcon size={10} />
+                    </button>
+                  </>
+                )}
+              </div>
+            ))}
+
+            {isEditingShortcuts && (
+              <button
+                type="button"
+                className="quick-chip chip-add-btn"
+                onClick={handleCancelEdit}
+                title="Add a new custom shortcut"
+              >
+                <PlusIcon size={12} className="text-cyan" />
+                <span className="chip-tag">+ NEW MACRO</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* INLINE SHORTCUT EDITOR DRAWER */}
+        {isEditingShortcuts && (
+          <div className="shortcut-edit-drawer">
+            <div className="shortcut-drawer-header">
+              <span className="drawer-title">
+                {editingShortcutId ? (
+                  <>
+                    <EditIcon size={12} className="text-cyan" />
+                    <span>Edit Shortcut Macro</span>
+                  </>
+                ) : (
+                  <>
+                    <PlusIcon size={12} className="text-cyan" />
+                    <span>Add New Shortcut Macro</span>
+                  </>
+                )}
+              </span>
+              {editingShortcutId && (
+                <button
+                  type="button"
+                  className="btn-cancel-mini"
+                  onClick={handleCancelEdit}
+                >
+                  Switch to Add New
+                </button>
+              )}
+            </div>
+
+            <div className="shortcut-form-grid">
+              <div className="shortcut-form-field">
+                <label>CATEGORY / TAG</label>
+                <input
+                  type="text"
+                  className="shortcut-input"
+                  placeholder="e.g. Spotify, Amazon, Search, Cart..."
+                  value={formTag}
+                  onChange={(e) => setFormTag(e.target.value)}
+                />
+              </div>
+
+              <div className="shortcut-form-field">
+                <label>GOAL / ACTION COMMAND</label>
+                <input
+                  type="text"
+                  className="shortcut-input"
+                  placeholder="e.g. Search tum hi ho on spotify"
+                  value={formAct}
+                  onChange={(e) => setFormAct(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleSaveShortcut();
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* ICON SELECTOR */}
+            <div className="shortcut-icon-selector">
+              <label>SELECT ICON:</label>
+              <div className="icon-selector-row">
+                {(
+                  [
+                    { name: "music", label: "Music" },
+                    { name: "globe", label: "Globe" },
+                    { name: "search", label: "Search" },
+                    { name: "cart", label: "Cart" },
+                    { name: "package", label: "Package" },
+                    { name: "file", label: "Doc" },
+                    { name: "arrowDown", label: "Down" },
+                    { name: "arrowUp", label: "Up" },
+                    { name: "zap", label: "Zap" },
+                    { name: "lock", label: "Lock" }
+                  ] as { name: ShortcutIconType; label: string }[]
+                ).map((ic) => (
+                  <button
+                    key={ic.name}
+                    type="button"
+                    className={`icon-choice-btn ${formIcon === ic.name ? "selected" : ""}`}
+                    onClick={() => setFormIcon(ic.name)}
+                    title={ic.label}
+                  >
+                    {renderShortcutIcon(ic.name)}
+                    <span className="icon-label-mini">{ic.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* FAVORITE TOGGLE ROW */}
+            <div className="shortcut-fav-toggle-row">
+              <label className="fav-toggle-label">
+                <input
+                  type="checkbox"
+                  checked={formIsFavorite}
+                  onChange={(e) => setFormIsFavorite(e.target.checked)}
+                />
+                <StarIcon size={12} className={formIsFavorite ? "text-gold" : "text-muted"} />
+                <span>⭐ Set as Category Favorite (Triggers when speaking keyword)</span>
+              </label>
+            </div>
+
+            {/* DRAWER ACTION BUTTONS */}
+            <div className="shortcut-drawer-actions">
+              <div className="left-drawer-actions">
+                <button
+                  type="button"
+                  className="btn-shortcut-save"
+                  onClick={handleSaveShortcut}
+                >
+                  {editingShortcutId ? "Update Shortcut" : "Save Shortcut"}
+                </button>
+                {editingShortcutId && (
+                  <button
+                    type="button"
+                    className="btn-shortcut-cancel"
+                    onClick={handleCancelEdit}
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
+              <span className="shortcut-tip-text">
+                💡 Tip: Macros persist across browser sessions in local storage.
+              </span>
+            </div>
+          </div>
+        )}
       </section>
 
       {/* STATUS BANNER */}
@@ -1815,6 +2590,36 @@ export function SidePanel() {
                   placeholder="e.g. NovaTech Innovations"
                   value={vault.company || ""}
                   onChange={(e) => setVault({ ...vault, company: e.target.value })}
+                />
+              </div>
+
+              <div className="vault-field">
+                <label>Job Title / Designation</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Lead AI Engineer"
+                  value={vault.jobTitle || ""}
+                  onChange={(e) => setVault({ ...vault, jobTitle: e.target.value })}
+                />
+              </div>
+
+              <div className="vault-field">
+                <label>Website URL</label>
+                <input
+                  type="url"
+                  placeholder="e.g. https://pixelnova.dev"
+                  value={vault.website || ""}
+                  onChange={(e) => setVault({ ...vault, website: e.target.value })}
+                />
+              </div>
+
+              <div className="vault-field full-width">
+                <label>Delivery / Special Notes</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Leave package at front desk"
+                  value={vault.notes || ""}
+                  onChange={(e) => setVault({ ...vault, notes: e.target.value })}
                 />
               </div>
             </div>

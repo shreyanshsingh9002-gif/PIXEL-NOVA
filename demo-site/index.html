@@ -28,7 +28,7 @@
   <main class="container">
     <!-- Notice Bar -->
     <div class="demo-banner">
-      <span>🧪 <strong>SIH 2026 Testbed Environment:</strong> This page simulates realistic user accounts with PII (Email, Phone, Aadhaar, PAN, Saved Cards) to test on-device redaction in PIXEL NOVA.</span>
+      <span>🛡️ <strong>PIXEL NOVA Consumer Privacy Environment:</strong> Simulates realistic e-commerce accounts covering 4 Core Pillars: <strong>Government IDs</strong> (Aadhaar, PAN, Passport), <strong>Financial Data</strong> (Cards, CVV, UPI, Bank Details), <strong>Credentials</strong> (Passwords, 2FA OTPs), and <strong>Contact/Location</strong> (Phone, Email, Delivery Address).</span>
     </div>
 
     <!-- PROFILE TAB -->
@@ -74,6 +74,10 @@
             <div class="field-row">
               <label>Permanent Account Number (PAN)</label>
               <div class="value code-val" id="val-pan">ABCDE1234F</div>
+            </div>
+            <div class="field-row">
+              <label>Indian Passport Number</label>
+              <div class="value code-val" id="val-passport">J1234567</div>
             </div>
             <div class="field-row">
               <label>Account Password</label>
@@ -129,8 +133,40 @@
                   </div>
                 </div>
               </div>
+          </div>
+        </div>
+
+        <!-- Saved UPI & Linked Bank Accounts Card -->
+        <div class="card full-width">
+          <div class="card-header">
+            <h3>⚡ Saved UPI & Linked Bank Accounts</h3>
+            <span class="badge badge-verified">NPCI / RBI Secure</span>
+          </div>
+          <div class="card-body">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+              <div style="background: rgba(15, 23, 42, 0.6); padding: 14px; border-radius: 8px; border: 1px solid #334155;">
+                <label style="font-size: 11px; color: #38bdf8; font-weight: bold; display: block; margin-bottom: 6px;">PRIMARY UPI ID (VPA)</label>
+                <div class="value code-val" id="val-upi" style="font-size: 14px; font-weight: 600;">rahul.sharma@okaxis</div>
+                <p style="font-size: 11px; color: #94a3b8; margin: 6px 0 0 0;">Linked to Google Pay / BHIM UPI for 1-click checkout</p>
+              </div>
+              <div style="background: rgba(15, 23, 42, 0.6); padding: 14px; border-radius: 8px; border: 1px solid #334155;">
+                <label style="font-size: 11px; color: #38bdf8; font-weight: bold; display: block; margin-bottom: 6px;">REFUND BANK ACCOUNT & IFSC</label>
+                <div style="display: flex; gap: 16px; align-items: center;">
+                  <div>
+                    <span style="font-size: 10px; color: #64748b; display: block;">A/C NUMBER</span>
+                    <span class="value code-val" id="val-bank-ac" style="font-size: 13px;">987654321098</span>
+                  </div>
+                  <div>
+                    <span style="font-size: 10px; color: #64748b; display: block;">IFSC CODE</span>
+                    <span class="value code-val" id="val-ifsc" style="font-size: 13px;">HDFC0001234</span>
+                  </div>
+                </div>
+                <p style="font-size: 11px; color: #94a3b8; margin: 6px 0 0 0;">HDFC Bank Ltd, New Delhi Connaught Place Branch</p>
+              </div>
             </div>
           </div>
+        </div>
+
         <!-- On-Device ML Contextual Benchmark Card -->
         <div class="card full-width" style="border: 1px solid rgba(168, 85, 247, 0.4); background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);">
           <div class="card-header">
@@ -139,33 +175,19 @@
           </div>
           <div class="card-body">
             <p style="font-size: 11px; color: #cbd5e1; margin-bottom: 12px;">
-              These fields contain <strong>unstructured contextual data</strong> that cannot be caught by regex rules. PIXEL NOVA's local ML classifier detects, classifies, and redacts them on-device:
+              These fields contain <strong>unstructured contextual data</strong> that cannot be caught by basic regex rules. PIXEL NOVA's local ML classifier detects, classifies, and redacts them on-device:
             </p>
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
-              <div style="background: rgba(15, 23, 42, 0.6); padding: 10px; border-radius: 6px; border-left: 3px solid #a855f7;">
-                <label style="font-size: 10px; font-weight: bold; color: #c084fc; display: block; margin-bottom: 4px;">🩺 CLINICAL DIAGNOSIS & PRESCRIPTION</label>
-                <div style="font-size: 12px; color: #f1f5f9;">
-                  Patient diagnosed with Type-2 Diabetes and prescribed Metformin dosage 500mg daily.
-                </div>
-              </div>
-
-              <div style="background: rgba(15, 23, 42, 0.6); padding: 10px; border-radius: 6px; border-left: 3px solid #f59e0b;">
+              <div style="background: rgba(15, 23, 42, 0.6); padding: 12px; border-radius: 6px; border-left: 3px solid #f59e0b;">
                 <label style="font-size: 10px; font-weight: bold; color: #fbbf24; display: block; margin-bottom: 4px;">💰 EXECUTIVE COMPENSATION & SALARY</label>
-                <div style="font-size: 12px; color: #f1f5f9;">
+                <div style="font-size: 13px; color: #f1f5f9;">
                   Current annual CTC is ₹45 LPA with ESOPs equity grant of 15000 shares.
                 </div>
               </div>
 
-              <div style="background: rgba(15, 23, 42, 0.6); padding: 10px; border-radius: 6px; border-left: 3px solid #8b5cf6;">
-                <label style="font-size: 10px; font-weight: bold; color: #a78bfa; display: block; margin-bottom: 4px;">🔮 PROPRIETARY CORPORATE SECRET</label>
-                <div style="font-size: 12px; color: #f1f5f9;">
-                  Project Valkyrie unreleased prototype: Strictly confidential, covered under NDA.
-                </div>
-              </div>
-
-              <div style="background: rgba(15, 23, 42, 0.6); padding: 10px; border-radius: 6px; border-left: 3px solid #ec4899;">
+              <div style="background: rgba(15, 23, 42, 0.6); padding: 12px; border-radius: 6px; border-left: 3px solid #ec4899;">
                 <label style="font-size: 10px; font-weight: bold; color: #f472b6; display: block; margin-bottom: 4px;">⚖️ JUDICIAL LITIGATION & COURT RECORD</label>
-                <div style="font-size: 12px; color: #f1f5f9;">
+                <div style="font-size: 13px; color: #f1f5f9;">
                   Police FIR No. 2024/091 - Court summons issued in High Court Civil Suit matter.
                 </div>
               </div>
@@ -279,6 +301,10 @@
               <div>
                 <label style="display: block; font-size: 11px; color: #94a3b8; margin-bottom: 4px;">Pincode</label>
                 <input type="text" name="pincode" placeholder="Postal PIN" style="width: 100%; padding: 8px; background: #1e293b; border: 1px solid #475569; color: #fff; border-radius: 6px;" />
+              </div>
+              <div>
+                <label style="display: block; font-size: 11px; color: #94a3b8; margin-bottom: 4px;">Pay with UPI (Instant VPA)</label>
+                <input type="text" name="upi_id" placeholder="username@upi" style="width: 100%; padding: 8px; background: #1e293b; border: 1px solid #475569; color: #fff; border-radius: 6px;" />
               </div>
             </div>
           </div>

@@ -593,10 +593,101 @@ body {
   box-shadow: 0 0 8px rgba(255, 255, 255, 0.1);
 }
 
+/* ============================================================
+   CUSTOMIZABLE MACRO SHORTCUTS & DOCK
+   ============================================================ */
+.shortcut-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 6px;
+  margin-bottom: 6px;
+  padding: 0 2px;
+}
+
+.shortcut-header-left {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.shortcut-section-title {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  color: #a1a1aa;
+  text-transform: uppercase;
+}
+
+.shortcut-count-pill {
+  font-size: 8px;
+  font-weight: 800;
+  background: rgba(6, 182, 212, 0.12);
+  color: #38bdf8;
+  padding: 1px 5px;
+  border-radius: 10px;
+  border: 1px solid rgba(6, 182, 212, 0.25);
+  line-height: 1;
+}
+
+.shortcut-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-manage-shortcuts {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9.5px;
+  font-weight: 700;
+  background: rgba(39, 39, 42, 0.6);
+  color: #a1a1aa;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 5px;
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-manage-shortcuts:hover {
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.4);
+  background: rgba(56, 189, 248, 0.1);
+}
+
+.btn-manage-shortcuts.active {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border-color: rgba(16, 185, 129, 0.4);
+}
+
+.btn-shortcut-reset-mini {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  background: rgba(244, 63, 94, 0.1);
+  color: #fb7185;
+  border: 1px solid rgba(244, 63, 94, 0.25);
+  border-radius: 5px;
+  padding: 3px 7px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-shortcut-reset-mini:hover {
+  background: rgba(244, 63, 94, 0.2);
+  color: #ffffff;
+}
+
 /* CATEGORIZED PLAYBOOK CHIPS */
 .chip-scroll-wrapper {
   overflow-x: auto;
-  padding-bottom: 2px;
+  padding-bottom: 4px;
+  padding-top: 4px;
 }
 
 .chip-scroll-wrapper::-webkit-scrollbar {
@@ -605,8 +696,15 @@ body {
 
 .chip-row {
   display: flex;
-  gap: 6px;
+  align-items: center;
+  gap: 8px;
   width: max-content;
+  padding: 2px 2px;
+}
+
+.quick-chip-wrapper {
+  position: relative;
+  display: inline-flex;
 }
 
 .quick-chip {
@@ -619,7 +717,7 @@ body {
   cursor: pointer;
   white-space: nowrap;
   transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 5px;
 }
@@ -631,6 +729,124 @@ body {
   transform: translateY(-1px);
 }
 
+.quick-chip.editable-chip {
+  border-style: dashed;
+  border-color: rgba(6, 182, 212, 0.35);
+  cursor: pointer;
+}
+
+.quick-chip.editable-chip:hover {
+  border-color: #22d3ee;
+  background: rgba(6, 182, 212, 0.1);
+}
+
+.quick-chip.editing-active {
+  background: rgba(6, 182, 212, 0.2) !important;
+  border: 1px solid #22d3ee !important;
+  box-shadow: 0 0 10px rgba(6, 182, 212, 0.3);
+  color: #ffffff;
+}
+
+.chip-icon-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chip-edit-badge {
+  display: inline-flex;
+  align-items: center;
+  color: #38bdf8;
+  margin-left: 2px;
+  opacity: 0.85;
+}
+
+.chip-fav-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 2px;
+}
+
+.text-gold {
+  color: #fbbf24 !important;
+  fill: #fbbf24;
+}
+
+.text-muted {
+  color: #71717a !important;
+}
+
+.chip-fav-toggle-btn {
+  position: absolute;
+  top: -6px;
+  left: -6px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #18181b;
+  color: #71717a;
+  border: 1.5px solid #09090b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 10;
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
+  padding: 0;
+}
+
+.chip-fav-toggle-btn:hover {
+  transform: scale(1.2);
+  color: #fbbf24;
+  border-color: #fbbf24;
+}
+
+.chip-fav-toggle-btn.active {
+  background: #f59e0b;
+  color: #09090b;
+  border-color: #fef08a;
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.5);
+}
+
+.chip-delete-btn {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #e11d48;
+  color: #ffffff;
+  border: 1.5px solid #09090b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 10;
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
+  padding: 0;
+}
+
+.chip-delete-btn:hover {
+  transform: scale(1.2);
+  background: #f43f5e;
+  box-shadow: 0 0 8px rgba(244, 63, 94, 0.6);
+}
+
+.chip-add-btn {
+  border-style: dashed;
+  border-color: rgba(6, 182, 212, 0.4);
+  color: #38bdf8;
+  background: rgba(6, 182, 212, 0.08);
+}
+
+.chip-add-btn:hover {
+  background: rgba(6, 182, 212, 0.18);
+  border-color: #22d3ee;
+}
+
 .chip-tag {
   font-size: 8px;
   font-weight: 800;
@@ -639,6 +855,223 @@ body {
   background: rgba(255, 255, 255, 0.1);
   color: #e4e4e7;
   text-transform: uppercase;
+}
+
+.chip-act {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* SHORTCUT EDIT DRAWER */
+.shortcut-edit-drawer {
+  background: rgba(20, 20, 25, 0.95);
+  border: 1px solid rgba(6, 182, 212, 0.25);
+  border-radius: 8px;
+  padding: 10px;
+  margin-top: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(12px);
+  animation: fadeIn 0.2s ease;
+}
+
+.shortcut-drawer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.drawer-title {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  color: #f8fafc;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.btn-cancel-mini {
+  font-size: 9px;
+  color: #94a3b8;
+  background: none;
+  border: none;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+}
+
+.btn-cancel-mini:hover {
+  color: #38bdf8;
+}
+
+.shortcut-form-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.shortcut-form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.shortcut-form-field label {
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  color: #71717a;
+}
+
+.shortcut-input {
+  background: #09090b;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 5px;
+  padding: 6px 8px;
+  font-size: 10.5px;
+  color: #f8fafc;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.shortcut-input:focus {
+  border-color: #22d3ee;
+  box-shadow: 0 0 6px rgba(6, 182, 212, 0.2);
+}
+
+.shortcut-icon-selector {
+  margin-bottom: 8px;
+}
+
+.shortcut-icon-selector label {
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  color: #71717a;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.icon-selector-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.icon-choice-btn {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 6px;
+  background: rgba(30, 30, 35, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  color: #a1a1aa;
+  cursor: pointer;
+  font-size: 8.5px;
+  transition: all 0.12s ease;
+}
+
+.icon-choice-btn:hover {
+  background: rgba(6, 182, 212, 0.1);
+  border-color: rgba(6, 182, 212, 0.3);
+  color: #e4e4e7;
+}
+
+.icon-choice-btn.selected {
+  background: rgba(6, 182, 212, 0.2);
+  border-color: #22d3ee;
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.icon-label-mini {
+  font-size: 8px;
+}
+
+.shortcut-fav-toggle-row {
+  margin-top: 8px;
+  margin-bottom: 6px;
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.25);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+
+.fav-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 9.5px;
+  font-weight: 700;
+  color: #fbbf24;
+  cursor: pointer;
+  user-select: none;
+}
+
+.fav-toggle-label input[type="checkbox"] {
+  accent-color: #f59e0b;
+  cursor: pointer;
+  width: 13px;
+  height: 13px;
+}
+
+.shortcut-drawer-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.left-drawer-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-shortcut-save {
+  background: #0284c7;
+  color: #ffffff;
+  border: none;
+  border-radius: 5px;
+  padding: 5px 12px;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.btn-shortcut-save:hover {
+  background: #0369a1;
+}
+
+.btn-shortcut-cancel {
+  background: rgba(255, 255, 255, 0.08);
+  color: #d4d4d8;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 5px;
+  padding: 5px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-shortcut-cancel:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+}
+
+.shortcut-tip-text {
+  font-size: 8.5px;
+  color: #71717a;
 }
 
 /* ============================================================

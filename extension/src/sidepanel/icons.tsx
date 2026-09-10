@@ -190,3 +190,62 @@ export const XIcon: React.FC<IconProps> = ({ className = '', size = 16, color = 
     <line x1="6" y1="6" x2="18" y2="18" />
   </svg>
 );
+
+export const MusicIcon: React.FC<IconProps> = ({ className = '', size = 16, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M9 18V5l12-2v13" />
+    <circle cx="6" cy="18" r="3" />
+    <circle cx="18" cy="16" r="3" />
+  </svg>
+);
+
+export const GlobeIcon: React.FC<IconProps> = ({ className = '', size = 16, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <circle cx="12" cy="12" r="10" />
+    <line x1="2" y1="12" x2="22" y2="12" />
+    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+  </svg>
+);
+
+export const EditIcon: React.FC<IconProps> = ({ className = '', size = 16, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+  </svg>
+);
+
+export const PlusIcon: React.FC<IconProps> = ({ className = '', size = 16, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <line x1="12" y1="5" x2="12" y2="19" />
+    <line x1="5" y1="12" x2="19" y2="12" />
+  </svg>
+);
+
+export const RotateCcwIcon: React.FC<IconProps> = ({ className = '', size = 16, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M3 2v6h6" />
+    <path d="M3 13a9 9 0 1 0 3-7.7L3 8" />
+  </svg>
+);
+
+export const SlidersIcon: React.FC<IconProps> = ({ className = '', size = 16, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <line x1="4" y1="21" x2="4" y2="14" />
+    <line x1="4" y1="10" x2="4" y2="3" />
+    <line x1="12" y1="21" x2="12" y2="12" />
+    <line x1="12" y1="8" x2="12" y2="3" />
+    <line x1="20" y1="21" x2="20" y2="16" />
+    <line x1="20" y1="12" x2="20" y2="3" />
+    <line x1="1" y1="14" x2="7" y2="14" />
+    <line x1="9" y1="8" x2="15" y2="8" />
+    <line x1="17" y1="16" x2="23" y2="16" />
+  </svg>
+);
+
+export const StarIcon: React.FC<IconProps> = ({ className = '', size = 16, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+  </svg>
+);
+
+

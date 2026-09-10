@@ -150,15 +150,17 @@ SANITIZED PAGE TEXT (preview):
 
 DECISION RULES:
 1. To type/search: action=type, targetIndex=<index>, selector=<selector>, value="{dynamic_query}" (the EXACT query the user wants, extracted from their goal)
-2. To click a button/link: action=click, targetIndex=<index>, selector=<selector>
-3. To scroll: action=scroll, direction=down, amount=450
-4. Goal already fulfilled: action=finish
-5. Choose the option with highest confidence.
+2. To auto-fill form/credentials/identity: action=autofill
+3. To click a button/link/tab/card: action=click, targetIndex=<index>, selector=<selector>
+4. To navigate to any website/URL: action=navigate, value="<url_or_domain>"
+5. To scroll: action=scroll, direction=down, amount=450
+6. Goal already fulfilled: action=finish
+7. Choose the option with highest confidence.
 
 Respond ONLY with raw JSON (no markdown, no backticks):
 {{
   "thought": "concise reasoning for chosen action",
-  "action": "click" | "type" | "scroll" | "navigate" | "wait" | "finish",
+  "action": "click" | "type" | "scroll" | "navigate" | "autofill" | "select" | "press_key" | "hover" | "wait" | "finish",
   "targetIndex": number or null,
   "selector": string or null,
   "value": string or null,
@@ -321,6 +323,27 @@ def fallback_semantic_planner(request: PlanRequest) -> PlanResponse:
     """
     goal_lower = request.goal.lower()
     dynamic_query = extract_query_from_goal(request.goal)
+
+    # 1. Navigation handling
+    nav_match = re.search(r"\b(?:open|go\s+to|navigate(?:\s+to)?|visit|browse(?:\s+to)?)\s+['\"]?([^'\"]+?)['\"]?$", request.goal, re.IGNORECASE)
+    if nav_match:
+        target = nav_match.group(1).strip()
+        if not re.search(r"\b(?:cart|carts|order|orders|here|there)\b", target, re.IGNORECASE):
+            return PlanResponse(
+                thought=f"Navigating to destination: {target}",
+                action="navigate",
+                value=target,
+                confidence=0.95
+            )
+
+    # 2. Autofill handling
+    if re.search(r"\b(?:auto\s*fill|fill\s*(?:my\s*)?(?:details|form|data|credentials|address|kyc|info)|populate\s*form)\b", goal_lower):
+        return PlanResponse(
+            thought="Populating form fields with on-device Privacy Vault credentials.",
+            action="autofill",
+            confidence=0.95
+        )
+
     tokens = [t for t in re.split(r"\W+", goal_lower) if len(t) > 2]
 
     best_match_idx: Optional[int] = None

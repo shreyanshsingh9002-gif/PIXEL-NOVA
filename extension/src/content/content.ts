@@ -376,11 +376,143 @@ function findTargetElementSmart(rawTerm: string): HTMLElement | null {
   return null;
 }
 
+// Universal Search Bar Resolver: Finds, reveals, and focuses the search input on ANY website
+async function findAndFocusSearchInput(): Promise<HTMLInputElement | HTMLTextAreaElement | null> {
+  const searchInputSelectors = [
+    // 1. Specialized test IDs & roles (Spotify, Twitter/X, Discord, Slack, etc.)
+    "input[data-testid='search-input']",
+    "input[data-testid='SearchBox_Search_Input']",
+    "input[data-testid*='search' i]",
+    "[role='searchbox']",
+    "input[type='search']",
+
+    // 2. High-traffic platform search inputs
+    "#twotabsearchtextbox",                         // Amazon Desktop
+    "#nav-search-keywords",                         // Amazon Mobile
+    "input[name='field-keywords']",                 // Amazon General
+    "input#search",                                 // YouTube
+    "input.ytd-searchbox",                          // YouTube
+    "input[name='search_query']",                   // YouTube
+    "textarea[name='q']",                           // Google Search (modern textarea)
+    "input[name='q']",                              // Google Search / General q
+    "#searchInput",                                 // Wikipedia
+    "input[name='search']",                         // Wikipedia / Standard HTML
+    "input.desktop-searchBar",                      // Myntra
+    "input[placeholder*='Search for Products' i]",  // Flipkart
+    "input[title*='Search for Products' i]",        // Flipkart
+    "input[name='query-builder-test']",             // GitHub Command Bar
+    "input.header-search-input",                    // GitHub
+    "input[placeholder*='Search GitHub' i]",        // GitHub
+
+    // 3. Music, Streaming & Media players (Spotify, SoundCloud, Apple Music, Netflix)
+    "input[placeholder*='What do you want to play' i]",
+    "input[placeholder*='What do you want to listen' i]",
+    "input[placeholder*='Artists, songs' i]",
+    "input[placeholder*='Search artists' i]",
+    "input[placeholder*='Search songs' i]",
+    "input[placeholder*='Search music' i]",
+    "input.searchInput",
+
+    // 4. Universal semantic attribute matching
+    "input[aria-label*='search' i]",
+    "textarea[aria-label*='search' i]",
+    "input[placeholder*='search' i]",
+    "textarea[placeholder*='search' i]",
+    "input[placeholder*='find' i]",
+    "input[id*='search' i]",
+    "input[name*='search' i]",
+    "input[class*='search' i]",
+    "input[name='s']",                              // WordPress standard search
+    "input[name='k']",                              // Asian / Japanese e-commerce
+    "input[name='keyword']",
+    "input[name='query']",
+
+    // 5. Form containers with search semantics
+    "form[role='search'] input:not([type='hidden']):not([type='submit'])",
+    "form[action*='search'] input:not([type='hidden']):not([type='submit'])",
+    "[role='search'] input:not([type='hidden']):not([type='submit'])",
+    "header input[type='text']",
+    "nav input[type='text']"
+  ];
+
+  // Pass 1: Direct lookup for any already visible search input on screen
+  for (const selector of searchInputSelectors) {
+    try {
+      const candidates = Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(selector));
+      for (const el of candidates) {
+        if (isElementVisible(el)) {
+          return el;
+        }
+      }
+    } catch (e) {}
+  }
+
+  // Pass 2: Search might be collapsed behind a search toggle button or nav link (e.g. Spotify Home page or mobile menu)
+  const searchOpenerSelectors = [
+    "a[href*='/search']",
+    "a[aria-label*='Search' i]",
+    "button[data-testid='search-tab']",
+    "button[aria-label*='Search' i]",
+    "#search-button-narrow",
+    "button.searchTab",
+    "button.search-toggle",
+    "button.search-button",
+    "button[title*='search' i]",
+    "[role='button'][aria-label*='search' i]",
+    "a[title*='search' i]",
+    ".header-search-button",
+    "button[class*='search' i]"
+  ];
+
+  for (const selector of searchOpenerSelectors) {
+    try {
+      const opener = document.querySelector<HTMLElement>(selector);
+      if (opener && isElementVisible(opener)) {
+        opener.focus();
+        opener.click();
+        // Wait 400ms for search input to be mounted into the DOM
+        await new Promise((r) => setTimeout(r, 450));
+
+        // Re-check for newly mounted search input
+        for (const inputSel of searchInputSelectors) {
+          const candidates = Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(inputSel));
+          for (const el of candidates) {
+            if (isElementVisible(el)) {
+              return el;
+            }
+          }
+        }
+        break;
+      }
+    } catch (e) {}
+  }
+
+  // Pass 3: Fallback to the first prominent text input in header/nav/body
+  const fallback = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+    "header input:not([type='hidden']), nav input:not([type='hidden']), input[type='text'], textarea"
+  );
+  if (fallback && isElementVisible(fallback)) {
+    return fallback;
+  }
+
+  return null;
+}
+
 async function executeAgentAction(
   action: AgentAction
 ): Promise<{ success: boolean; result?: string; error?: string }> {
   try {
     if (action.action === "scroll") {
+      // 1. Scroll directly to targeted text or selector if specified
+      if (action.targetText || action.selector) {
+        const scrollTarget = action.selector
+          ? document.querySelector<HTMLElement>(action.selector)
+          : (action.targetText ? findTargetElementSmart(action.targetText) : null);
+        if (scrollTarget) {
+          scrollTarget.scrollIntoView({ behavior: "smooth", block: "center" });
+          return { success: true, result: `Scrolled smoothly to element '${action.targetText || action.selector}'` };
+        }
+      }
       if (action.direction === "top") {
         window.scrollTo({ top: 0, behavior: "smooth" });
         return { success: true, result: "Scrolled smoothly to top of page" };
@@ -389,15 +521,16 @@ async function executeAgentAction(
         window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
         return { success: true, result: "Scrolled smoothly to bottom of page" };
       }
-      const amount = action.amount || 500;
+      const amount = action.amount || 600;
       const top = action.direction === "up" ? -amount : amount;
       window.scrollBy({ top, behavior: "smooth" });
       return { success: true, result: `Scrolled window ${action.direction === "up" ? "up" : "down"} by ${amount}px` };
     }
 
-    if (action.action === "navigate" && action.value) {
-      window.location.href = action.value;
-      return { success: true, result: `Navigating to ${action.value}` };
+    if (action.action === "navigate" && (action.url || action.value)) {
+      const dest = action.url || action.value!;
+      window.location.href = dest;
+      return { success: true, result: `Navigating to ${dest}` };
     }
 
     if (action.action === "wait") {
@@ -507,6 +640,111 @@ async function executeAgentAction(
             targetEl = bestCard;
           }
         }
+      } else if (
+        term.startsWith("play") ||
+        term.startsWith("watch") ||
+        term.startsWith("listen") ||
+        term.startsWith("stream") ||
+        window.location.hostname.includes("spotify.com") ||
+        window.location.hostname.includes("youtube.com")
+      ) {
+        const rawSongOrVideoQuery = term
+          .replace(/^(?:please\s+)?(?:play|watch|listen(?:\s+to)?|stream|open|click)\s+/i, "")
+          .replace(/^(?:the\s+)?(?:song|track|video|music)\s+/i, "")
+          .replace(/^["']|["']$/g, "")
+          .trim()
+          .toLowerCase();
+
+        // 1. YouTube Video / Play Button Resolver
+        if (window.location.hostname.includes("youtube.com")) {
+          // If already on a watch page, ensure video plays
+          const videoEl = document.querySelector<HTMLVideoElement>("video");
+          if (videoEl && window.location.pathname.includes("/watch") && (!rawSongOrVideoQuery || rawSongOrVideoQuery.length < 3)) {
+            try {
+              videoEl.play();
+            } catch (e) {}
+            targetEl = document.querySelector<HTMLElement>("button.ytp-play-button") || videoEl;
+          } else {
+            // Find video renderers in search results
+            const videoCards = Array.from(
+              document.querySelectorAll<HTMLElement>("ytd-video-renderer, ytd-rich-item-renderer, ytd-grid-video-renderer")
+            );
+            if (videoCards.length > 0) {
+              let matchedTitle: HTMLElement | null = null;
+              if (rawSongOrVideoQuery) {
+                const queryTokens = rawSongOrVideoQuery.split(/\s+/).filter(Boolean);
+                for (const card of videoCards) {
+                  const titleEl = card.querySelector<HTMLElement>("#video-title, a#thumbnail, a#video-title-link");
+                  const cardText = (card.innerText || card.textContent || "").toLowerCase();
+                  if (queryTokens.every((t) => cardText.includes(t)) || queryTokens.some((t) => cardText.includes(t))) {
+                    matchedTitle = titleEl || card.querySelector("a") || card;
+                    break;
+                  }
+                }
+              }
+              if (!matchedTitle && videoCards[0]) {
+                matchedTitle = videoCards[0].querySelector<HTMLElement>("#video-title, a#thumbnail, a#video-title-link") || videoCards[0];
+              }
+              if (matchedTitle) {
+                targetEl = matchedTitle;
+              }
+            }
+          }
+        }
+
+        // 2. Spotify Track / Play Button Resolver
+        if (!targetEl && window.location.hostname.includes("spotify.com")) {
+          // Check top result card play button
+          const topCardPlayBtn = document.querySelector<HTMLElement>(
+            "[data-testid='top-result-card'] button[data-testid='play-button'], [data-testid='top-result-card'] button[aria-label*='Play' i], [data-testid='top-result-card']"
+          );
+          if (
+            topCardPlayBtn &&
+            (!rawSongOrVideoQuery || (topCardPlayBtn.innerText || topCardPlayBtn.textContent || "").toLowerCase().includes(rawSongOrVideoQuery))
+          ) {
+            targetEl = topCardPlayBtn.querySelector("button") || topCardPlayBtn;
+          } else {
+            // Track list rows
+            const trackRows = Array.from(
+              document.querySelectorAll<HTMLElement>("[data-testid='tracklist-row'], div[role='row']")
+            );
+            if (trackRows.length > 0) {
+              let matchedRow: HTMLElement | null = null;
+              if (rawSongOrVideoQuery) {
+                const queryTokens = rawSongOrVideoQuery.split(/\s+/).filter(Boolean);
+                for (const row of trackRows) {
+                  const rowText = (row.innerText || row.textContent || "").toLowerCase();
+                  if (queryTokens.some((t) => rowText.includes(t))) {
+                    matchedRow = row;
+                    break;
+                  }
+                }
+              }
+              if (!matchedRow && trackRows[0]) {
+                matchedRow = trackRows[0];
+              }
+              if (matchedRow) {
+                matchedRow.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+                matchedRow.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+                const rowPlayBtn = matchedRow.querySelector<HTMLElement>("button[data-testid='play-button'], button[aria-label*='Play' i]");
+                targetEl = rowPlayBtn || matchedRow;
+              }
+            } else if (topCardPlayBtn) {
+              targetEl = topCardPlayBtn.querySelector("button") || topCardPlayBtn;
+            } else {
+              targetEl = document.querySelector<HTMLElement>(
+                "button[data-testid='play-button'], button[aria-label^='Play'], [data-testid='control-button-playpause']"
+              );
+            }
+          }
+        }
+
+        // 3. Generic Audio / Video or Media Player fallback
+        if (!targetEl) {
+          targetEl = document.querySelector<HTMLElement>(
+            "button[aria-label*='play' i], button[title*='play' i], .play-btn, .btn-play, button.play, video, audio"
+          );
+        }
       } else if (term.includes("cart") || term === "cart") {
         targetEl = document.querySelector<HTMLElement>(
           "#nav-cart, #btn-nav-cart, a[href*='/cart'], a[href*='cart']"
@@ -537,11 +775,19 @@ async function executeAgentAction(
 
 
 
-    // Fallback for search typing if no specific input was resolved
-    if (!targetEl && action.action === "type") {
-      targetEl = document.querySelector<HTMLElement>(
-        "#site-search, input[type='search'], input[name*='search' i], input[id*='search' i], input[placeholder*='search' i], input[name='q'], #twotabsearchtextbox, input[type='text'], textarea"
-      );
+    // Search input resolution (Spotify, YouTube, Google, Amazon, Wikipedia, Twitter, etc.)
+    if (action.action === "type") {
+      if (action.pressEnter || !targetEl) {
+        const foundSearchInput = await findAndFocusSearchInput();
+        if (foundSearchInput) {
+          targetEl = foundSearchInput;
+        }
+      }
+      if (!targetEl) {
+        targetEl = document.querySelector<HTMLElement>(
+          "#site-search, input[type='search'], input[name*='search' i], input[id*='search' i], input[placeholder*='search' i], input[name='q'], #twotabsearchtextbox, input[type='text'], textarea"
+        );
+      }
     }
 
     if (!targetEl) {
@@ -683,6 +929,11 @@ async function executeAgentAction(
       targetEl.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
       targetEl.click();
 
+      // Spotify track rows start playback upon double-click
+      if (window.location.hostname.includes("spotify.com")) {
+        targetEl.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, view: window }));
+      }
+
       // Trigger wrapped parent container if applicable (e.g. Amazon .a-button or #submit.buy-now)
       const aButtonWrap = targetEl.closest<HTMLElement>(".a-button, .a-button-inner, [id*='buy-now'], [id*='add-to-cart']");
       if (aButtonWrap && aButtonWrap !== targetEl) {
@@ -697,68 +948,150 @@ async function executeAgentAction(
     }
 
     if (action.action === "type") {
-      targetEl.focus();
-      const inputEl = targetEl as HTMLInputElement;
+      const inputEl = targetEl as (HTMLInputElement | HTMLTextAreaElement);
+
+      // Smooth scroll into center view
+      inputEl.scrollIntoView({ behavior: "smooth", block: "center" });
+      inputEl.focus();
+
+      // Sleek glowing HUD highlight around active search bar
+      const rect = inputEl.getBoundingClientRect();
+      const overlay = document.createElement("div");
+      overlay.style.position = "fixed";
+      overlay.style.left = `${rect.left}px`;
+      overlay.style.top = `${rect.top}px`;
+      overlay.style.width = `${rect.width}px`;
+      overlay.style.height = `${rect.height}px`;
+      overlay.style.border = "2px solid #06b6d4";
+      overlay.style.boxShadow = "0 0 20px rgba(6, 182, 212, 0.9)";
+      overlay.style.borderRadius = "6px";
+      overlay.style.pointerEvents = "none";
+      overlay.style.zIndex = "2147483647";
+      document.body.appendChild(overlay);
+      setTimeout(() => overlay.remove(), 1200);
 
       inputEl.dispatchEvent(new Event("focus", { bubbles: true }));
 
-      // Framework-compatible setter for React / modern SPAs
-      const nativeSetter = Object.getOwnPropertyDescriptor(
-        window.HTMLInputElement.prototype,
-        "value"
-      )?.set;
+      // Framework-compatible setter for React / modern SPAs (Spotify, YouTube, Google, Twitter)
+      const isTextArea = inputEl instanceof HTMLTextAreaElement;
+      const proto = isTextArea ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+      const nativeSetter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
       if (nativeSetter) {
         nativeSetter.call(inputEl, action.value || "");
       } else {
-        inputEl.value = action.value || "";
+        (inputEl as any).value = action.value || "";
       }
 
-      inputEl.dispatchEvent(new Event("input", { bubbles: true }));
-      inputEl.dispatchEvent(new Event("change", { bubbles: true }));
-
-      // Dispatch full Enter keyboard sequence (keydown, keypress, keyup with keyCode 13)
-      const enterOptions = {
-        key: "Enter",
-        code: "Enter",
-        keyCode: 13,
-        which: 13,
-        bubbles: true,
-        cancelable: true,
-        composed: true,
-        view: window
-      };
-      inputEl.dispatchEvent(new KeyboardEvent("keydown", enterOptions));
-      inputEl.dispatchEvent(new KeyboardEvent("keypress", enterOptions));
-      inputEl.dispatchEvent(new KeyboardEvent("keyup", enterOptions));
-
-      // If input is enclosed in a form, request submit
+      inputEl.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+      inputEl.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
       try {
-        if (inputEl.form) {
-          if (typeof inputEl.form.requestSubmit === "function") {
-            inputEl.form.requestSubmit();
-          } else {
-            inputEl.form.submit();
-          }
-        }
-      } catch (formErr) {
-        console.log("Form requestSubmit caught:", formErr);
-      }
+        inputEl.dispatchEvent(new InputEvent("input", {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          data: action.value || "",
+          inputType: "insertText"
+        }));
+      } catch (e) {}
 
-      // Also trigger companion search/submit button if present
-      const container = inputEl.closest("form, header, nav, [role='search'], div") || inputEl.parentElement;
-      if (container) {
-        const searchBtn = container.querySelector<HTMLElement>(
-          "#btn-search, #nav-search-submit-button, #search-icon-legacy, button[type='submit'], input[type='submit'], button[id*='search' i], button[class*='search' i], button[aria-label*='search' i]"
-        );
-        if (searchBtn && searchBtn !== targetEl) {
-          searchBtn.click();
+      // Dispatch full Enter keyboard sequence if action.pressEnter is true (default for search commands)
+      if (action.pressEnter) {
+        const enterOptions = {
+          key: "Enter",
+          code: "Enter",
+          keyCode: 13,
+          which: 13,
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          view: window
+        };
+        inputEl.dispatchEvent(new KeyboardEvent("keydown", enterOptions));
+        inputEl.dispatchEvent(new KeyboardEvent("keypress", enterOptions));
+        inputEl.dispatchEvent(new KeyboardEvent("keyup", enterOptions));
+
+        // If input is enclosed in a form, request submit
+        try {
+          if (inputEl.form) {
+            if (typeof inputEl.form.requestSubmit === "function") {
+              inputEl.form.requestSubmit();
+            } else {
+              inputEl.form.submit();
+            }
+          }
+        } catch (formErr) {
+          console.log("Form requestSubmit caught:", formErr);
+        }
+
+        // Also trigger companion search/submit button if present (YouTube #search-icon-legacy, Amazon submit button, etc.)
+        const container = inputEl.closest("form, header, nav, [role='search'], div") || inputEl.parentElement;
+        if (container) {
+          const searchBtn = container.querySelector<HTMLElement>(
+            "#btn-search, #nav-search-submit-button, #search-icon-legacy, button[type='submit'], input[type='submit'], button[id*='search' i], button[class*='search' i], button[aria-label*='search' i]"
+          );
+          if (searchBtn && searchBtn !== targetEl) {
+            searchBtn.click();
+          }
         }
       }
 
       return {
         success: true,
-        result: `Typed '${action.value}' into <${targetEl.tagName.toLowerCase()}> and pressed Enter`
+        result: `Searched for '${action.value}' in active site search bar`
       };
+    }
+
+    if (action.action === "press_key") {
+      const activeEl = (targetEl || document.activeElement || document.body) as HTMLElement;
+      const keyName = action.keyName || action.value || "Enter";
+      const keyCode = keyName === "Enter" ? 13 : keyName === "Tab" ? 9 : keyName === "Escape" ? 27 : 0;
+      const keyOpts = {
+        key: keyName,
+        code: keyName,
+        keyCode,
+        which: keyCode,
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        view: window
+      };
+      activeEl.dispatchEvent(new KeyboardEvent("keydown", keyOpts));
+      activeEl.dispatchEvent(new KeyboardEvent("keypress", keyOpts));
+      activeEl.dispatchEvent(new KeyboardEvent("keyup", keyOpts));
+      return {
+        success: true,
+        result: `Simulated keypress '${keyName}' on <${activeEl.tagName.toLowerCase()}>`
+      };
+    }
+
+    if (action.action === "hover") {
+      targetEl.dispatchEvent(new PointerEvent("pointerover", { bubbles: true, composed: true }));
+      targetEl.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, composed: true }));
+      targetEl.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true, composed: true }));
+      return {
+        success: true,
+        result: `Hovered over <${targetEl.tagName.toLowerCase()}>`
+      };
+    }
+
+    if (action.action === "select" && action.value) {
+      if (targetEl.tagName.toLowerCase() === "select") {
+        const sel = targetEl as HTMLSelectElement;
+        const targetVal = action.value.toLowerCase().trim();
+        let matched = false;
+        for (let i = 0; i < sel.options.length; i++) {
+          const opt = sel.options[i];
+          if (opt.value.toLowerCase() === targetVal || (opt.text && opt.text.toLowerCase().includes(targetVal))) {
+            sel.selectedIndex = i;
+            sel.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+            matched = true;
+            break;
+          }
+        }
+        if (matched) {
+          return { success: true, result: `Selected '${action.value}' in <select>` };
+        }
+      }
     }
 
     return { success: false, error: `Unsupported action: ${action.action}` };
@@ -770,7 +1103,10 @@ async function executeAgentAction(
   }
 }
 
-function autoFillFormLocally(profile: UserVaultProfile): { success: boolean; filledCount: number; fields: string[] } {
+function autoFillFormLocally(
+  profile: UserVaultProfile,
+  customData?: Record<string, string>
+): { success: boolean; filledCount: number; fields: string[] } {
   const inputs = Array.from(
     document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(
       "input:not([type='hidden']):not([type='submit']):not([type='button']):not([type='reset']), textarea, select"
@@ -806,7 +1142,7 @@ function autoFillFormLocally(profile: UserVaultProfile): { success: boolean; fil
       const pGender = profile.gender.toLowerCase();
       if (rVal === pGender || labelText.includes(pGender) || (pGender === "male" && rVal === "m") || (pGender === "female" && rVal === "f")) {
         (input as HTMLInputElement).checked = true;
-        input.dispatchEvent(new Event("change", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
         filledCount++;
         filledFields.push(`Gender: ${profile.gender}`);
         continue;
@@ -819,85 +1155,110 @@ function autoFillFormLocally(profile: UserVaultProfile): { success: boolean; fil
     let valToFill = "";
     let fieldCategory = "";
 
-    if (/aadhaar|aadhar|uidai/i.test(descriptor) && profile.aadhaarMock) {
-      valToFill = profile.aadhaarMock;
-      fieldCategory = "Aadhaar";
-    } else if (/\bpan\b|pancard/i.test(descriptor) && profile.panMock) {
-      valToFill = profile.panMock;
-      fieldCategory = "PAN";
-    } else if (/passport/i.test(descriptor) && profile.passportMock) {
-      valToFill = profile.passportMock;
-      fieldCategory = "Passport";
-    } else if (/dl\b|driving.*licen/i.test(descriptor) && profile.drivingLicenseMock) {
-      valToFill = profile.drivingLicenseMock;
-      fieldCategory = "Driving License";
-    } else if (/gender|sex\b/i.test(descriptor) && profile.gender) {
-      valToFill = profile.gender;
-      fieldCategory = "Gender";
-    } else if (/dob|birth|bday|date[_\s-]?of[_\s-]?birth/i.test(descriptor) || type === "date") {
-      if (profile.dob) {
-        valToFill = profile.dob;
-        fieldCategory = "DOB";
+    // 1. Dynamic in-flight custom data matching (e.g. from user prompt)
+    if (customData && typeof customData === "object") {
+      for (const [key, val] of Object.entries(customData)) {
+        const cleanK = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+        const cleanDesc = descriptor.toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (cleanK.length >= 2 && cleanDesc.includes(cleanK)) {
+          valToFill = val;
+          fieldCategory = key;
+          break;
+        }
       }
-    } else if (/alt.*phone|emergency.*phone|secondary.*phone|alt.*mobile/i.test(descriptor) && profile.alternatePhone) {
-      valToFill = profile.alternatePhone;
-      fieldCategory = "Alternate Phone";
-    } else if (/email|e-mail/i.test(descriptor) || type === "email") {
-      if (profile.email) {
-        valToFill = profile.email;
-        fieldCategory = "Email";
+    }
+
+    // 2. Persona / Profile Vault matching
+    if (!valToFill) {
+      if (/aadhaar|aadhar|uidai/i.test(descriptor) && profile.aadhaarMock) {
+        valToFill = profile.aadhaarMock;
+        fieldCategory = "Aadhaar";
+      } else if (/\bpan\b|pancard/i.test(descriptor) && profile.panMock) {
+        valToFill = profile.panMock;
+        fieldCategory = "PAN";
+      } else if (/passport/i.test(descriptor) && profile.passportMock) {
+        valToFill = profile.passportMock;
+        fieldCategory = "Passport";
+      } else if (/dl\b|driving.*licen/i.test(descriptor) && profile.drivingLicenseMock) {
+        valToFill = profile.drivingLicenseMock;
+        fieldCategory = "Driving License";
+      } else if (/gender|sex\b/i.test(descriptor) && profile.gender) {
+        valToFill = profile.gender;
+        fieldCategory = "Gender";
+      } else if (/dob|birth|bday|date[_\s-]?of[_\s-]?birth/i.test(descriptor) || type === "date") {
+        if (profile.dob) {
+          valToFill = profile.dob;
+          fieldCategory = "DOB";
+        }
+      } else if (/alt.*phone|emergency.*phone|secondary.*phone|alt.*mobile/i.test(descriptor) && profile.alternatePhone) {
+        valToFill = profile.alternatePhone;
+        fieldCategory = "Alternate Phone";
+      } else if (/email|e-mail/i.test(descriptor) || type === "email") {
+        if (profile.email) {
+          valToFill = profile.email;
+          fieldCategory = "Email";
+        }
+      } else if (/phone|mobile|tel|contact/i.test(descriptor) || type === "tel") {
+        if (profile.phone) {
+          valToFill = profile.phone;
+          fieldCategory = "Phone";
+        }
+      } else if (/first[_\s-]?name|fname/i.test(descriptor)) {
+        if (profile.fullName) {
+          valToFill = profile.fullName.split(" ")[0];
+          fieldCategory = "First Name";
+        }
+      } else if (/last[_\s-]?name|lname/i.test(descriptor)) {
+        if (profile.fullName) {
+          const parts = profile.fullName.split(" ");
+          valToFill = parts.length > 1 ? parts.slice(1).join(" ") : "";
+          fieldCategory = "Last Name";
+        }
+      } else if (/full[_\s-]?name|name|customer|recipient/i.test(descriptor) && !/user|login|pass/i.test(descriptor)) {
+        if (profile.fullName) {
+          valToFill = profile.fullName;
+          fieldCategory = "Full Name";
+        }
+      } else if (/pincode|postal|zip/i.test(descriptor)) {
+        if (profile.pincode) {
+          valToFill = profile.pincode;
+          fieldCategory = "Pincode";
+        }
+      } else if (
+        /address|street|flat|house|building|suite|line[_\s-]?1|addr[_\s-]?1|addr\b/i.test(descriptor) &&
+        !/landmark/i.test(name + " " + id + " " + labelText)
+      ) {
+        if (profile.address) {
+          valToFill = profile.address;
+          fieldCategory = "Address";
+        }
+      } else if (/landmark|locality/i.test(descriptor) && profile.landmark) {
+        valToFill = profile.landmark;
+        fieldCategory = "Landmark";
+      } else if (/city|town|district/i.test(descriptor)) {
+        if (profile.city) {
+          valToFill = profile.city;
+          fieldCategory = "City";
+        }
+      } else if (/state|province|region/i.test(descriptor) && profile.state) {
+        valToFill = profile.state;
+        fieldCategory = "State";
+      } else if (/country|nation/i.test(descriptor) && profile.country) {
+        valToFill = profile.country;
+        fieldCategory = "Country";
+      } else if (/company|organization|org\b|business.*name|employer/i.test(descriptor) && profile.company) {
+        valToFill = profile.company;
+        fieldCategory = "Company";
+      } else if (/job.*title|role|designation|occupation/i.test(descriptor) && profile.jobTitle) {
+        valToFill = profile.jobTitle;
+        fieldCategory = "Job Title";
+      } else if (/website|portfolio|url/i.test(descriptor) && profile.website) {
+        valToFill = profile.website;
+        fieldCategory = "Website";
+      } else if (/notes|comments?|message|description|feedback|inquiry/i.test(descriptor) && profile.notes) {
+        valToFill = profile.notes;
+        fieldCategory = "Notes";
       }
-    } else if (/phone|mobile|tel|contact/i.test(descriptor) || type === "tel") {
-      if (profile.phone) {
-        valToFill = profile.phone;
-        fieldCategory = "Phone";
-      }
-    } else if (/first[_\s-]?name|fname/i.test(descriptor)) {
-      if (profile.fullName) {
-        valToFill = profile.fullName.split(" ")[0];
-        fieldCategory = "First Name";
-      }
-    } else if (/last[_\s-]?name|lname/i.test(descriptor)) {
-      if (profile.fullName) {
-        const parts = profile.fullName.split(" ");
-        valToFill = parts.length > 1 ? parts.slice(1).join(" ") : "";
-        fieldCategory = "Last Name";
-      }
-    } else if (/full[_\s-]?name|name|customer|recipient/i.test(descriptor) && !/user|login|pass/i.test(descriptor)) {
-      if (profile.fullName) {
-        valToFill = profile.fullName;
-        fieldCategory = "Full Name";
-      }
-    } else if (/pincode|postal|zip/i.test(descriptor)) {
-      if (profile.pincode) {
-        valToFill = profile.pincode;
-        fieldCategory = "Pincode";
-      }
-    } else if (
-      /address|street|flat|house|building|suite|line[_\s-]?1|addr[_\s-]?1|addr\b/i.test(descriptor) &&
-      !/landmark/i.test(name + " " + id + " " + labelText)
-    ) {
-      if (profile.address) {
-        valToFill = profile.address;
-        fieldCategory = "Address";
-      }
-    } else if (/landmark|locality/i.test(descriptor) && profile.landmark) {
-      valToFill = profile.landmark;
-      fieldCategory = "Landmark";
-    } else if (/city|town|district/i.test(descriptor)) {
-      if (profile.city) {
-        valToFill = profile.city;
-        fieldCategory = "City";
-      }
-    } else if (/state|province|region/i.test(descriptor) && profile.state) {
-      valToFill = profile.state;
-      fieldCategory = "State";
-    } else if (/country|nation/i.test(descriptor) && profile.country) {
-      valToFill = profile.country;
-      fieldCategory = "Country";
-    } else if (/company|organization|org\b|business.*name|employer/i.test(descriptor) && profile.company) {
-      valToFill = profile.company;
-      fieldCategory = "Company";
     }
 
     if (valToFill) {
@@ -911,7 +1272,7 @@ function autoFillFormLocally(profile: UserVaultProfile): { success: boolean; fil
           const optVal = (opt.value || "").toLowerCase();
           if (optVal === targetVal || optText === targetVal || optText.includes(targetVal) || targetVal.includes(optText)) {
             select.selectedIndex = i;
-            select.dispatchEvent(new Event("change", { bubbles: true }));
+            select.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
             matched = true;
             break;
           }
@@ -922,9 +1283,17 @@ function autoFillFormLocally(profile: UserVaultProfile): { success: boolean; fil
         }
       } else {
         input.focus();
-        input.value = valToFill;
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-        input.dispatchEvent(new Event("change", { bubbles: true }));
+        const proto = input.tagName.toLowerCase() === "textarea"
+          ? window.HTMLTextAreaElement.prototype
+          : window.HTMLInputElement.prototype;
+        const nativeSetter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+        if (nativeSetter) {
+          nativeSetter.call(input, valToFill);
+        } else {
+          input.value = valToFill;
+        }
+        input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
 
         // Green privacy shield glow animation on filled input
         input.style.transition = "box-shadow 0.3s ease, border-color 0.3s ease";
@@ -1072,7 +1441,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message?.type === "AUTOFILL_FORM") {
-    const result = autoFillFormLocally(message.profile);
+    const result = autoFillFormLocally(message.profile, message.customData);
     sendResponse({
       type: "AUTOFILL_RESULT",
       success: result.success,

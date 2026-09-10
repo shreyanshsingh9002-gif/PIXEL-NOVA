@@ -22,11 +22,14 @@ class PlanRequest(BaseModel):
 
 class PlanResponse(BaseModel):
     thought: str
-    action: Literal["click", "type", "scroll", "navigate", "wait", "finish"]
+    action: Literal["click", "type", "scroll", "navigate", "autofill", "select", "press_key", "hover", "wait", "finish"]
     targetIndex: Optional[int] = None
     selector: Optional[str] = None
+    targetText: Optional[str] = None
     value: Optional[str] = None
-    direction: Optional[Literal["up", "down"]] = None
+    url: Optional[str] = None
+    keyName: Optional[str] = None
+    direction: Optional[Literal["up", "down", "top", "bottom"]] = None
     amount: Optional[int] = None
     confidence: float = 0.95
 

@@ -51,6 +51,9 @@ export type PIICategory =
   | "CVV"
   | "CARD_EXPIRY"
   | "OTP"
+  | "UPI"
+  | "PASSPORT"
+  | "BANK_ACCOUNT"
   | "MEDICAL"
   | "FINANCIAL"
   | "CONFIDENTIAL"
@@ -133,6 +136,10 @@ export type AgentActionType =
   | "scroll"
   | "navigate"
   | "wait"
+  | "autofill"
+  | "select"
+  | "press_key"
+  | "hover"
   | "finish"
   | "confirm_action";
 
@@ -141,6 +148,7 @@ export interface AgentAction {
   targetIndex?: number;
   selector?: string;
   value?: string;
+  url?: string;
   direction?: "up" | "down" | "top" | "bottom";
   amount?: number;
   thought: string;
@@ -149,6 +157,8 @@ export interface AgentAction {
   warningMessage?: string;
   pressEnter?: boolean;
   targetText?: string;
+  customFillData?: Record<string, string>;
+  keyName?: string;
 }
 
 export interface AgentStep {
@@ -183,6 +193,9 @@ export interface UserVaultProfile {
   country: string;
   pincode: string;
   company?: string;
+  jobTitle?: string;
+  website?: string;
+  notes?: string;
   aadhaarMock: string;
   panMock: string;
   drivingLicenseMock?: string;
@@ -205,7 +218,29 @@ export type ExtensionMessage =
   | { type: "SCREENSHOT_RESPONSE"; success: boolean; dataUrl?: string; error?: string }
   | { type: "HIGHLIGHT_ELEMENT"; index: number }
   | { type: "CLEAR_HIGHLIGHT" }
-  | { type: "AUTOFILL_FORM"; profile: UserVaultProfile }
+  | { type: "AUTOFILL_FORM"; profile: UserVaultProfile; customData?: Record<string, string> }
   | { type: "AUTOFILL_RESULT"; success: boolean; filledCount: number; fields: string[] }
   | { type: "DEEP_SEARCH"; query: string }
-  | { type: "DEEP_SEARCH_RESULT"; success: boolean; result?: DeepNavResult; error?: string };
+  | { type: "DEEP_SEARCH_RESULT"; success: boolean; result?: DeepNavResult; error?: string }
+  | { type: "NAVIGATE_TAB"; url: string }
+  | { type: "NAVIGATE_TAB_RESULT"; success: boolean; url?: string; error?: string };
+
+export type ShortcutIconType =
+  | "cart"
+  | "package"
+  | "search"
+  | "file"
+  | "arrowDown"
+  | "arrowUp"
+  | "music"
+  | "globe"
+  | "zap"
+  | "lock";
+
+export interface CustomShortcut {
+  id: string;
+  tag: string;
+  act: string;
+  iconName: ShortcutIconType;
+  isFavorite?: boolean;
+}

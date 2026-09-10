@@ -82,6 +82,15 @@ export function getCanonicalEntityKey(category: PIICategory, rawValue: string): 
     case "ADDRESS":
       return `addr_${clean.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 35)}`;
 
+    case "UPI":
+      return `upi_${clean.toLowerCase()}`;
+
+    case "PASSPORT":
+      return `passport_${clean.toUpperCase().replace(/\s+/g, "")}`;
+
+    case "BANK_ACCOUNT":
+      return `bank_${clean.replace(/[^a-zA-Z0-9]/g, "").toUpperCase()}`;
+
     default:
       return `${category.toLowerCase()}_${clean.toLowerCase().replace(/\s+/g, " ")}`;
   }
@@ -174,8 +183,41 @@ const PATTERNS: Array<{
     category: "SECRET",
     risk: "HIGH",
     regex: /\b(?:sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,}|AIza[0-9A-Za-z-_]{35}|eyJ[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.?[A-Za-z0-9-_.+/=]*)\b/g
+  },
+  // UPI Virtual Payment Address (e.g. rahul@okaxis, 9876543210@paytm, name@upi)
+  {
+    category: "UPI",
+    risk: "HIGH",
+    regex: /\b[a-zA-Z0-9.\-_]{2,64}@(okhdfcbank|okaxis|oksbi|okicici|ybl|ibl|axl|paytm|upi|apl|barodampay|pnb|postbank|idfcbank|freecharge|federal|rbl|kotak|sbi|hdfcbank|icici|axisbank)\b/gi
+  },
+  // Indian Passport Number (1 letter, followed by 7 digits)
+  {
+    category: "PASSPORT",
+    risk: "HIGH",
+    regex: /\b[A-PR-WYa-pr-wy][1-9]\d\s?\d{4}[1-9]\b/g,
+    validator: (match) => {
+      const clean = match.replace(/\s/g, "");
+      return clean.length === 8 && /^[A-Za-z][0-9]{7}$/.test(clean);
+    }
+  },
+  // Indian Bank IFSC Code (4 letters, 0, 6 alphanumeric)
+  {
+    category: "BANK_ACCOUNT",
+    risk: "MEDIUM",
+    regex: /\b[A-Z]{4}0[A-Z0-9]{6}\b/g
   }
 ];
+
+const FALSE_POSITIVE_WORDS = new Set([
+  // Legal procedural words
+  "issued", "matter", "filed", "pending", "hearing", "notice", "order", "summons",
+  "court", "suit", "police", "high", "civil", "criminal", "case", "action", "dispute",
+  "record", "litigation", "bench", "tribunal", "session", "judiciary", "justice",
+  // Common filler words
+  "account", "balance", "number", "payment", "card", "expire", "valid", "total",
+  "amount", "order", "status", "delivery", "shipping", "billing", "customer",
+  "client", "profile", "password", "security", "code", "digits", "verified"
+]);
 
 /**
  * Global entity deduplicator that merges duplicate entity instances,
@@ -186,6 +228,14 @@ export function deduplicateEntities(rawEntities: PIIEntity[]): PIIEntity[] {
 
   for (const ent of rawEntities) {
     if (!ent.value || ent.value.trim().length < 2) continue;
+
+    const valLower = ent.value.trim().toLowerCase();
+    // 1. Filter out known false positive common English words
+    if (FALSE_POSITIVE_WORDS.has(valLower)) continue;
+
+    // 2. Legal case/FIR numbers MUST contain at least one digit
+    if (ent.category === "LEGAL" && !/\d/.test(ent.value)) continue;
+
     const key = getCanonicalEntityKey(ent.category, ent.value);
 
     if (!seenKeys.has(key)) {
@@ -231,6 +281,9 @@ export function deduplicateEntities(rawEntities: PIIEntity[]): PIIEntity[] {
     else if (cat === "ADDRESS") maskedValue = "[REDACTED_ADDRESS]";
     else if (cat === "PASSWORD") maskedValue = "████████";
     else if (cat === "NAME") maskedValue = "[REDACTED_NAME]";
+    else if (cat === "UPI") maskedValue = "[REDACTED_UPI]";
+    else if (cat === "PASSPORT") maskedValue = "[REDACTED_PASSPORT]";
+    else if (cat === "BANK_ACCOUNT") maskedValue = "[REDACTED_BANK_AC]";
 
     ent.id = `pii_${cat.toLowerCase()}_${count}`;
     ent.maskedValue = maskedValue;
@@ -701,6 +754,18 @@ export function detectPIIInDOM(
     else if (type === "password" || combined.includes("password") || combined.includes("passwd")) {
       helperAddEntityWithBox("PASSWORD", val, `████████`, "HIGH", inp);
     }
+    // UPI / VPA ID
+    else if ((combined.includes("upi") || combined.includes("vpa")) && val.length >= 4) {
+      helperAddEntityWithBox("UPI", val, `[REDACTED_UPI]`, "HIGH", inp);
+    }
+    // Passport
+    else if (combined.includes("passport") && val.length >= 6) {
+      helperAddEntityWithBox("PASSPORT", val, `[REDACTED_PASSPORT]`, "HIGH", inp);
+    }
+    // Bank Account / IFSC
+    else if ((combined.includes("ifsc") || combined.includes("bank_acc") || combined.includes("account_no")) && val.length >= 4) {
+      helperAddEntityWithBox("BANK_ACCOUNT", val, `[REDACTED_BANK_AC]`, "HIGH", inp);
+    }
   });
 
   // 2. Email elements in static DOM (e.g. #val-email or .email-val)
@@ -759,6 +824,38 @@ export function detectPIIInDOM(
     const val = (el.innerText || (el as HTMLInputElement).value || "").trim();
     if (/^\d{4,8}$/.test(val)) {
       helperAddEntityWithBox("OTP", val, "██████", "HIGH", el);
+    }
+  });
+
+  // 8. UPI elements in static DOM (e.g. #val-upi or .upi-val)
+  const upiEls = doc.querySelectorAll<HTMLElement>("[id*='upi' i], [class*='upi' i], [id*='vpa' i]");
+  upiEls.forEach((el) => {
+    if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") return;
+    const val = (el.innerText || "").trim();
+    if (/[a-zA-Z0-9.\-_]{2,64}@[a-zA-Z]{2,64}/.test(val)) {
+      helperAddEntityWithBox("UPI", val, "[REDACTED_UPI]", "HIGH", el);
+    }
+  });
+
+  // 9. Bank Account & IFSC elements in static DOM
+  const bankEls = doc.querySelectorAll<HTMLElement>("[id*='ifsc' i], [class*='ifsc' i], [id*='bank-ac' i], [class*='bank-ac' i], [id*='account-num' i]");
+  bankEls.forEach((el) => {
+    if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") return;
+    const val = (el.innerText || "").trim();
+    if (/\b[A-Z]{4}0[A-Z0-9]{6}\b/.test(val)) {
+      helperAddEntityWithBox("BANK_ACCOUNT", val, "[REDACTED_IFSC]", "MEDIUM", el);
+    } else if (/\b\d{9,18}\b/.test(val)) {
+      helperAddEntityWithBox("BANK_ACCOUNT", val, "[REDACTED_BANK_AC]", "HIGH", el);
+    }
+  });
+
+  // 10. Passport elements in static DOM (e.g. #val-passport)
+  const passEls = doc.querySelectorAll<HTMLElement>("[id*='passport' i], [class*='passport' i]");
+  passEls.forEach((el) => {
+    if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") return;
+    const val = (el.innerText || "").trim();
+    if (/^[A-PR-WYa-pr-wy][1-9]\d\s?\d{4}[1-9]$/.test(val)) {
+      helperAddEntityWithBox("PASSPORT", val, "[REDACTED_PASSPORT]", "HIGH", el);
     }
   });
 
