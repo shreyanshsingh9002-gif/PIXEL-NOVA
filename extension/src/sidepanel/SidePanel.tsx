@@ -323,7 +323,11 @@ function decomposeMultitaskingGoal(rawGoal: string, currentUrl: string = ""): st
   if (verb === "play" || verb === "watch" || verb === "listen" || verb === "stream" || platformConfig?.defaultAction === "play") {
     steps.push(`play "${query}"`);
   } else if (verb === "buy" || verb === "order") {
-    steps.push(`open product: ${query} and add to cart`);
+    if (/\bbuy\s*now\b/i.test(rawGoal)) {
+      steps.push(`open product: ${query} and buy now`);
+    } else {
+      steps.push(`open product: ${query} and add to cart`);
+    }
   } else {
     steps.push(`click "${query}"`);
   }
@@ -1227,25 +1231,39 @@ export function SidePanel() {
         // 4B. COMPLETE REAL-WORLD E-COMMERCE PIPELINE: 
         // 1. INSPECT FIRST VIEW FOR ACTUAL PRODUCT
         // 2. IF NOT IN FIRST VIEW, SCROLL DOWN VIEWPORT AND SCAN
-        // 3. ADD THAT VERIFIED PRODUCT TO CART
+        // 3. ADD THAT VERIFIED PRODUCT TO CART / BUY NOW
         // 4. STOP IMMEDIATELY (NO UNNECESSARY SCROLLS OR ACTIONS AFTERWARDS)
-        const isSearchAndAddFlow =
+        const isAddIntent =
+          /\b(?:add\s*(?:it\s*)?to\s*cart|add\s*cart)\b/i.test(subGoal) ||
+          (/\b(?:add\s*(?:it\s*)?to\s*cart|add\s*cart)\b/i.test(rawGoal) && !/\bbuy\s*now\b/i.test(subGoal)) ||
+          /\badd\s+.+?\s*to\s*cart\b/i.test(subGoal);
+
+        const isBuyNowIntent =
+          /\bbuy\s*now\b/i.test(subGoal) ||
+          (/\bbuy\s*now\b/i.test(rawGoal) && !/\badd\s*(?:it\s*)?to\s*cart\b/i.test(subGoal));
+
+        const isSearchAndEcommerceFlow =
           (rawGoal !== subGoal &&
             /\b(?:search|find|look\s*for)\b/i.test(rawGoal) &&
-            /\b(?:add\s*(?:it\s*)?to\s*cart|add\s*cart)\b/i.test(subGoal)) ||
-          /\b(?:add\s*(?:the\s*)?.+?\s*to\s*cart|buy\s+.+)\b/i.test(subGoal);
+            (isAddIntent || isBuyNowIntent)) ||
+          /\badd\s+.+?\s*to\s*cart\b/i.test(subGoal) ||
+          (/\bbuy\s+[a-z0-9]/i.test(subGoal) && !/\bbuy\s*now\b/i.test(subGoal));
 
-        if (isSearchAndAddFlow) {
+        if (isSearchAndEcommerceFlow) {
+          const flowIntent: "add_to_cart" | "buy_now" = isBuyNowIntent ? "buy_now" : "add_to_cart";
+          const actionLabel = flowIntent === "buy_now" ? "Buy Now" : "Add to Cart";
+
           // Extract the core product query from rawGoal or subGoal (e.g. "macbook m4")
           let productQuery = rawGoal
             .replace(/^(?:please\s+)?(?:search(?:\s+for)?|find|look\s*for|buy|order|get)\s+/i, "")
             .replace(/\s+(?:in|on|at)\s+[a-z0-9.-]+$/i, "")
-            .replace(/\s+and\s+add\s+to\s+cart.*$/i, "")
+            .replace(/\s+and\s+(?:add\s+to\s+cart|buy\s*now).*$/i, "")
             .replace(/\badd\s+(?:it\s*)?to\s*cart\b/i, "")
+            .replace(/\bbuy\s*now\b/i, "")
             .replace(/\bto\s*cart\b/i, "")
             .trim();
           if (!productQuery || productQuery.length < 2) {
-            productQuery = subGoal.replace(/^(?:add|buy|order)\s+/i, "").replace(/\s+to\s+cart.*$/i, "").trim();
+            productQuery = subGoal.replace(/^(?:add|buy|order)\s+/i, "").replace(/\s+(?:to\s+cart|now).*$/i, "").trim();
           }
 
           updateStatus(`E-Commerce Flow: Checking search results for "${productQuery}"...`);
@@ -1257,41 +1275,42 @@ export function SidePanel() {
               await new Promise((r) => setTimeout(r, 4200));
               await observeAndProtect().catch(() => {});
 
-              updateStatus(`📜 Scrolling to Buy Box and adding "${res.productTitle}" to cart...`);
-              const addRes = await executeActionInTab({
+              updateStatus(`📜 Scrolling to Buy Box and clicking ${actionLabel} on "${res.productTitle}"...`);
+              const actionRes = await executeActionInTab({
                 action: "find_and_add_product",
                 value: productQuery,
-                amount: 2, // 2 = direct on-page add to cart
-                thought: `Scrolling down and clicking Add to Cart on product page for '${res.productTitle}'`
+                targetText: flowIntent === "buy_now" ? "buy now" : "add to cart",
+                amount: 2, // 2 = direct on-page CTA
+                thought: `Scrolling down and clicking ${actionLabel} on product page for '${res.productTitle}'`
               });
 
-              if (addRes.success) {
-                updateStatus(`🎉 Completed: "${res.productTitle}" added to cart!`);
+              if (actionRes.success) {
+                updateStatus(`🎉 Completed: "${res.productTitle}" - ${actionLabel} clicked!`);
                 setSteps((prev) => [
                   ...prev,
                   {
                     stepIndex: prev.length + 1,
                     timestamp: Date.now(),
                     goal: subGoal,
-                    action: { action: "find_and_add_product", value: productQuery, thought: "Added verified product to cart" },
+                    action: { action: "find_and_add_product", value: productQuery, targetText: flowIntent === "buy_now" ? "buy now" : "add to cart", thought: `Clicked ${actionLabel} for verified product` },
                     status: "completed",
-                    result: addRes.result || `Verified product "${res.productTitle}" added to cart successfully on product page.`
+                    result: actionRes.result || `Verified product "${res.productTitle}" - ${actionLabel} clicked successfully on product page.`
                   }
                 ]);
               } else {
-                updateStatus(`Product page opened. ${addRes.error || "Please select product options to add to cart"}`);
+                updateStatus(`Product page opened. ${actionRes.error || `Please select product options to ${flowIntent === "buy_now" ? "buy" : "add to cart"}`}`);
               }
             } else {
-              updateStatus(`🎉 Completed: "${res.productTitle}" added to cart!`);
+              updateStatus(`🎉 Completed: "${res.productTitle}" - ${actionLabel} clicked!`);
               setSteps((prev) => [
                 ...prev,
                 {
                   stepIndex: prev.length + 1,
                   timestamp: Date.now(),
                   goal: subGoal,
-                  action: { action: "find_and_add_product", value: productQuery, thought: "Added verified product directly" },
+                  action: { action: "find_and_add_product", value: productQuery, targetText: flowIntent === "buy_now" ? "buy now" : "add to cart", thought: `Clicked ${actionLabel} directly` },
                   status: "completed",
-                  result: res.result || `Added "${res.productTitle}" to cart directly.`
+                  result: res.result || `${actionLabel} clicked on "${res.productTitle}" directly.`
                 }
               ]);
             }
@@ -1302,6 +1321,7 @@ export function SidePanel() {
           const firstViewAction: AgentAction = {
             action: "find_and_add_product",
             value: productQuery,
+            targetText: flowIntent === "buy_now" ? "buy now" : "add to cart",
             amount: 1, // 1 = checkFirstViewOnly
             thought: `Inspecting first view for verified product '${productQuery}'`
           };
@@ -1335,6 +1355,7 @@ export function SidePanel() {
             const scrollScanAction: AgentAction = {
               action: "find_and_add_product",
               value: productQuery,
+              targetText: flowIntent === "buy_now" ? "buy now" : "add to cart",
               amount: 0, // 0 = scan active viewport
               thought: `Inspecting scrolled products for '${productQuery}'`
             };
@@ -1417,14 +1438,21 @@ export function SidePanel() {
           const { targetText, isHereThere } = extractTargetTextFromGoal(subGoal);
 
           let cleanTarget = targetText;
-          if (/\bbuy\s*now\b/i.test(subGoal)) cleanTarget = "buy now";
-          else if (/\badd\s*(?:it\s*)?to\s*cart\b/i.test(subGoal) || /\badd\s*cart\b/i.test(subGoal)) cleanTarget = "add to cart";
+          const isExplicitBuyNowCommand = /\b(?:click\s+)?buy\s*now\b/i.test(subGoal);
+          const isExplicitAddToCartCommand = /\b(?:click\s+)?add\s*(?:it\s*)?to\s*cart\b/i.test(subGoal) || /\badd\s*cart\b/i.test(subGoal);
+
+          if (isExplicitBuyNowCommand) cleanTarget = "buy now";
+          else if (isExplicitAddToCartCommand) cleanTarget = "add to cart";
 
           const clickAction: AgentAction = {
             action: "click",
             targetText: cleanTarget,
             thought: isHereThere
               ? "Voice Command: Clicking active or primary element"
+              : isExplicitBuyNowCommand
+              ? "Voice Command: Clicking Buy Now button"
+              : isExplicitAddToCartCommand
+              ? "Voice Command: Clicking Add to Cart button"
               : /\b(?:play|watch|listen|stream)\b/i.test(subGoal)
               ? `Media Playback: Playing '${cleanTarget}'`
               : `Executing click on '${cleanTarget || "target element"}'`
@@ -1446,7 +1474,8 @@ export function SidePanel() {
           }
 
           // FINANCIAL & SENSITIVE TRIGGER: Buy Now, Checkout, Pay -> Show Confirmation Modal Popup
-          if (safety.requiresUserConfirmation) {
+          // NOTE: If the user explicitly commanded "buy now" via voice/chat, execute their explicit instruction directly!
+          if (safety.requiresUserConfirmation && !isExplicitBuyNowCommand) {
             setPendingConfirmation(safety.sanitizedAction);
             updateStatus(`Action requires user authorization: ${safety.sanitizedAction.warningMessage || "Please authorize transaction"}`);
             return; // Stop and keep modal open until user clicks Authorize or Reject

@@ -609,29 +609,89 @@ function scoreProductCardCandidate(
   return { score, isMatch: score > 0, reason: `Verified Match (Score: ${score})` };
 }
 
-async function clickAddToCartOnProductPage(): Promise<{ success: boolean; productFound?: boolean; productTitle?: string; result?: string; error?: string }> {
-  const cartSelectors = [
-    "#add-to-cart-button",
-    "input[name='submit.add-to-cart']",
-    "#submit\\.add-to-cart",
-    "#submit\\.add-to-cart-announce",
-    "button[name='submit.add-to-cart']",
-    "#add-to-cart-button-bb",
-    "#addToCart input",
-    "#addToCart_feature_div input",
-    "[data-action='add-to-cart']",
-    ".btn-cart",
-    "#buy-now-button",
-    "button._2KpZ6l._2U9uOA._3v1-ww",
-    "button._2KpZ6l._2U9uOA.ihZ85k._3AWRsL"
-  ];
+const STRICT_ADD_TO_CART_SELECTORS = [
+  "#add-to-cart-button",
+  "input[name='submit.add-to-cart']",
+  "input#add-to-cart-button",
+  "#submit\\.add-to-cart",
+  "#submit\\.add-to-cart-announce",
+  "button[name='submit.add-to-cart']",
+  "#add-to-cart-button-bb",
+  "#addToCart input",
+  "#addToCart_feature_div input",
+  "#addToCart_feature_div button",
+  "[data-action='add-to-cart']",
+  "button[data-action='add-to-cart']",
+  ".btn-cart",
+  "button.btn-cart",
+  "button._2KpZ6l._2U9uOA._3v1-ww", // Flipkart Add to Cart
+  "button[aria-label*='Add to Cart' i]",
+  "button[title*='Add to Cart' i]"
+];
 
+const STRICT_BUY_NOW_SELECTORS = [
+  "#buy-now-button",
+  "input[name='submit.buy-now']",
+  "input#buy-now-button",
+  "#submit\\.buy-now",
+  "#submit\\.buy-now-announce",
+  "button[name='submit.buy-now']",
+  "#buy-now-button-bb",
+  "#buyNow input",
+  "#buyNow_feature_div input",
+  "#buyNow_feature_div button",
+  "[data-action='buy-now']",
+  "button[data-action='buy-now']",
+  ".btn-buy",
+  "button.btn-buy",
+  "button._2KpZ6l._2U9uOA.ihZ85k._3AWRsL", // Flipkart Buy Now
+  "button[aria-label*='Buy Now' i]",
+  "button[title*='Buy Now' i]"
+];
+
+function isBuyNowElement(el: HTMLElement): boolean {
+  const id = (el.id || "").toLowerCase();
+  const name = (el.getAttribute("name") || "").toLowerCase();
+  const text = (el.innerText || el.textContent || (el as HTMLInputElement).value || "").toLowerCase();
+  const aria = (el.getAttribute("aria-label") || "").toLowerCase();
+  const cls = (el.className || "").toString().toLowerCase();
+
+  return (
+    id.includes("buy-now") ||
+    id.includes("buynow") ||
+    name.includes("buy-now") ||
+    name.includes("buynow") ||
+    aria.includes("buy now") ||
+    /\bbuy\s*now\b/i.test(text) ||
+    cls.includes("ihz85k")
+  );
+}
+
+function isAddToCartElement(el: HTMLElement): boolean {
+  const id = (el.id || "").toLowerCase();
+  const name = (el.getAttribute("name") || "").toLowerCase();
+  const text = (el.innerText || el.textContent || (el as HTMLInputElement).value || "").toLowerCase();
+  const aria = (el.getAttribute("aria-label") || "").toLowerCase();
+  const cls = (el.className || "").toString().toLowerCase();
+
+  return (
+    id.includes("add-to-cart") ||
+    id.includes("addtocart") ||
+    name.includes("add-to-cart") ||
+    name.includes("addtocart") ||
+    aria.includes("add to cart") ||
+    /\badd\s+to\s+(?:cart|bag|basket)\b/i.test(text) ||
+    cls.includes("_3v1-ww")
+  );
+}
+
+async function clickAddToCartOnProductPage(): Promise<{ success: boolean; productFound?: boolean; productTitle?: string; result?: string; error?: string }> {
   let cartBtn: HTMLElement | null = null;
 
-  // Pass 1: Try finding immediately
-  for (const sel of cartSelectors) {
+  // Pass 1: Immediate selector check
+  for (const sel of STRICT_ADD_TO_CART_SELECTORS) {
     const el = document.querySelector<HTMLElement>(sel);
-    if (el && (el.offsetParent !== null || el.getClientRects().length > 0)) {
+    if (el && !isBuyNowElement(el) && (el.offsetParent !== null || el.getClientRects().length > 0)) {
       cartBtn = el;
       break;
     }
@@ -642,19 +702,23 @@ async function clickAddToCartOnProductPage(): Promise<{ success: boolean; produc
     window.scrollBy({ top: 550, behavior: "smooth" });
     await new Promise((r) => setTimeout(r, 800));
 
-    for (const sel of cartSelectors) {
+    for (const sel of STRICT_ADD_TO_CART_SELECTORS) {
       const el = document.querySelector<HTMLElement>(sel);
-      if (el) {
+      if (el && !isBuyNowElement(el)) {
         cartBtn = el;
         break;
       }
     }
   }
 
-  // Pass 3: Button text fallback
+  // Pass 3: Button text fallback (STRICTLY rejecting any Buy Now buttons)
   if (!cartBtn) {
     const buttons = Array.from(document.querySelectorAll<HTMLElement>("button, input[type='button'], input[type='submit'], a.a-button-text"));
-    cartBtn = buttons.find((b) => /\badd\s+to\s+(?:cart|bag|basket)\b/i.test(b.innerText || b.getAttribute("value") || "")) || null;
+    cartBtn = buttons.find((b) => {
+      if (isBuyNowElement(b)) return false;
+      const text = b.innerText || (b as HTMLInputElement).value || b.getAttribute("aria-label") || "";
+      return /\badd\s+to\s+(?:cart|bag|basket)\b/i.test(text);
+    }) || null;
   }
 
   if (!cartBtn) {
@@ -668,7 +732,13 @@ async function clickAddToCartOnProductPage(): Promise<{ success: boolean; produc
   cartBtn.scrollIntoView({ behavior: "smooth", block: "center" });
   await new Promise((r) => setTimeout(r, 600));
 
-  cartBtn.click();
+  // Click input if present or parent button or element
+  const innerInput = cartBtn.querySelector<HTMLInputElement>("input[type='submit'], input[type='button']");
+  if (innerInput && !isBuyNowElement(innerInput)) {
+    innerInput.click();
+  } else {
+    cartBtn.click();
+  }
   await new Promise((r) => setTimeout(r, 1400));
 
   // Dismiss any AppleCare / warranty upsell popup ("No thanks")
@@ -688,18 +758,83 @@ async function clickAddToCartOnProductPage(): Promise<{ success: boolean; produc
   };
 }
 
+async function clickBuyNowOnProductPage(): Promise<{ success: boolean; productFound?: boolean; productTitle?: string; result?: string; error?: string }> {
+  let buyBtn: HTMLElement | null = null;
+
+  // Pass 1: Immediate selector check
+  for (const sel of STRICT_BUY_NOW_SELECTORS) {
+    const el = document.querySelector<HTMLElement>(sel);
+    if (el && !isAddToCartElement(el) && (el.offsetParent !== null || el.getClientRects().length > 0)) {
+      buyBtn = el;
+      break;
+    }
+  }
+
+  // Pass 2: Smooth scroll down to bring Buy Box / Specs into view
+  if (!buyBtn) {
+    window.scrollBy({ top: 550, behavior: "smooth" });
+    await new Promise((r) => setTimeout(r, 800));
+
+    for (const sel of STRICT_BUY_NOW_SELECTORS) {
+      const el = document.querySelector<HTMLElement>(sel);
+      if (el && !isAddToCartElement(el)) {
+        buyBtn = el;
+        break;
+      }
+    }
+  }
+
+  // Pass 3: Button text fallback (STRICTLY rejecting any Add to Cart buttons)
+  if (!buyBtn) {
+    const buttons = Array.from(document.querySelectorAll<HTMLElement>("button, input[type='button'], input[type='submit'], a.a-button-text"));
+    buyBtn = buttons.find((b) => {
+      if (isAddToCartElement(b)) return false;
+      const text = b.innerText || (b as HTMLInputElement).value || b.getAttribute("aria-label") || "";
+      return /\b(?:buy\s*now|proceed\s+to\s+buy|instant\s+checkout)\b/i.test(text);
+    }) || null;
+  }
+
+  if (!buyBtn) {
+    return {
+      success: false,
+      productFound: false,
+      error: "Could not locate 'Buy Now' button on product page."
+    };
+  }
+
+  buyBtn.scrollIntoView({ behavior: "smooth", block: "center" });
+  await new Promise((r) => setTimeout(r, 600));
+
+  // Click input if present or parent button or element
+  const innerInput = buyBtn.querySelector<HTMLInputElement>("input[type='submit'], input[type='button']");
+  if (innerInput && !isAddToCartElement(innerInput)) {
+    innerInput.click();
+  } else {
+    buyBtn.click();
+  }
+  await new Promise((r) => setTimeout(r, 1400));
+
+  return {
+    success: true,
+    productFound: true,
+    productTitle: document.title,
+    result: "Successfully scrolled to Buy Box and clicked 'Buy Now' on product page!"
+  };
+}
+
 async function findAndAddVerifiedProduct(
   query: string,
-  checkFirstViewOnly: boolean
+  checkFirstViewOnly: boolean,
+  intent: "add_to_cart" | "buy_now" = "add_to_cart"
 ): Promise<{ success: boolean; productFound: boolean; productTitle?: string; navigatingToProduct?: boolean; productUrl?: string; addedDirectly?: boolean; result?: string; error?: string }> {
   // A. Check if current page is ALREADY a specific product page (e.g. /dp/ on Amazon)
   const onProductPage =
     window.location.href.includes("/dp/") ||
     window.location.href.includes("/gp/product/") ||
-    document.querySelector("#add-to-cart-button, #buyNow") !== null;
+    document.querySelector("#add-to-cart-button, #buy-now-button, #buyNow") !== null;
 
   if (onProductPage) {
-    return await clickAddToCartOnProductPage();
+    return intent === "buy_now" ? await clickBuyNowOnProductPage() : await clickAddToCartOnProductPage();
   }
 
   // B. Search results page: locate all product result cards
@@ -729,6 +864,7 @@ async function findAndAddVerifiedProduct(
     isInFirstView: boolean;
     hasAddToCart: boolean;
     addToCartBtn: HTMLElement | null;
+    buyNowBtn: HTMLElement | null;
   }
 
   const scoredCards: ScoredCard[] = [];
@@ -749,6 +885,9 @@ async function findAndAddVerifiedProduct(
     const addToCartBtn = card.querySelector<HTMLElement>(
       "[data-component-type='s-add-to-cart-button'] button, button[name='submit.add-to-cart'], button.a-button-text[name*='add-to-cart'], [data-action='add-to-cart'], .s-add-to-cart-button button"
     );
+    const buyNowBtn = card.querySelector<HTMLElement>(
+      "button[name='submit.buy-now'], button[id*='buy-now'], [data-action='buy-now'], button.btn-buy"
+    );
     const hasAddToCart = addToCartBtn !== null && isElementVisible(addToCartBtn);
 
     const rect = card.getBoundingClientRect();
@@ -768,7 +907,8 @@ async function findAndAddVerifiedProduct(
         score,
         isInFirstView,
         hasAddToCart,
-        addToCartBtn
+        addToCartBtn,
+        buyNowBtn
       });
     }
   }
@@ -791,8 +931,20 @@ async function findAndAddVerifiedProduct(
   best.cardEl.scrollIntoView({ behavior: "smooth", block: "center" });
   await new Promise((r) => setTimeout(r, 600));
 
-  // Option 1: Click the verified card's inline Add to Cart button if present
-  if (best.addToCartBtn && isElementVisible(best.addToCartBtn)) {
+  // Option 1: Click verified card's inline button if matching intent
+  if (intent === "buy_now" && best.buyNowBtn && isElementVisible(best.buyNowBtn)) {
+    best.buyNowBtn.click();
+    await new Promise((r) => setTimeout(r, 1200));
+    return {
+      success: true,
+      productFound: true,
+      productTitle: best.title,
+      addedDirectly: true,
+      result: `Successfully clicked 'Buy Now' for verified product "${best.title}"!`
+    };
+  }
+
+  if (intent === "add_to_cart" && best.addToCartBtn && isElementVisible(best.addToCartBtn)) {
     best.addToCartBtn.click();
     await new Promise((r) => setTimeout(r, 1200));
     return {
@@ -832,7 +984,7 @@ async function findAndAddVerifiedProduct(
   return {
     success: false,
     productFound: false,
-    error: `Located "${best.title}" but could not trigger navigation or add-to-cart.`
+    error: `Located "${best.title}" but could not trigger navigation or ${intent === "buy_now" ? "buy-now" : "add-to-cart"}.`
   };
 }
 
@@ -885,10 +1037,17 @@ async function executeAgentAction(
       const query = action.value || action.targetText || "";
       const checkFirstViewOnly = action.amount === 1;
       const isDirectOnProductPage = action.amount === 2;
+      const isBuyNow =
+        (action.targetText && /\bbuy\s*now\b/i.test(action.targetText)) ||
+        (action.thought && /\bbuy\s*now\b/i.test(action.thought));
+      const intent: "add_to_cart" | "buy_now" = isBuyNow ? "buy_now" : "add_to_cart";
+
       if (isDirectOnProductPage) {
-        return await clickAddToCartOnProductPage();
+        return intent === "buy_now"
+          ? await clickBuyNowOnProductPage()
+          : await clickAddToCartOnProductPage();
       }
-      return await findAndAddVerifiedProduct(query, checkFirstViewOnly);
+      return await findAndAddVerifiedProduct(query, checkFirstViewOnly, intent);
     }
 
     let targetEl: HTMLElement | null = null;
@@ -904,23 +1063,23 @@ async function executeAgentAction(
       targetEl = document.querySelector<HTMLElement>(action.selector);
     }
 
-    // Target text match (e.g. "click cart", "click track package", "click proceed", "add to cart")
+    // Target text match (e.g. "click cart", "click track package", "click proceed", "add to cart", "buy now")
     if (!targetEl && action.targetText) {
       const term = action.targetText.toLowerCase().trim();
 
       // Priority 1: Direct e-commerce Add to Cart vs Buy Now buttons
       if (term.includes("buy now") || term === "buy now") {
-        targetEl = document.querySelector<HTMLElement>(
-          "#buy-now-button, input[name='submit.buy-now'], #submit\\.buy-now, #submit\\.buy-now-announce, input[id*='buy-now'], button[id*='buy-now'], [data-action='buy-now'], [aria-label*='Buy Now' i], [title*='Buy Now' i], .a-button-input[value*='Buy Now' i], #buyNow, #buy-now-button-bb, button.btn-buy, #buyNow_feature_div input, #buyNow_feature_div .a-button-inner"
-        );
-      } else if (term.includes("add to cart") || term.includes("add cart") || term === "add to cart") {
-        targetEl = document.querySelector<HTMLElement>(
-          "#add-to-cart-button, input[name='submit.add-to-cart'], #submit\\.add-to-cart, #submit\\.add-to-cart-announce, button[name='submit.add-to-cart'], [data-action='add-to-cart'], [aria-label*='Add to Cart' i], [title*='Add to Cart' i], .a-button-input[value*='Add to Cart' i], button.btn-cart, button[id*='add-to-cart'], button[name*='add-to-cart'], form[action*='cart'] button[type='submit'], #submit\\.add-to-cart, #add-to-cart-button-bb, #addToCart, #addToCart_feature_div input, #addToCart_feature_div .a-button-inner"
-        );
-        // Only click search result button if on a specific single product page or if explicit value passed
-        if (!targetEl && action.value) {
-          return await findAndAddVerifiedProduct(action.value, false);
+        const onSearchResults = document.querySelectorAll("[data-component-type='s-search-result'], .s-result-item[data-asin]:not([data-asin='']), .product-card").length > 0;
+        if (onSearchResults && !window.location.href.includes("/dp/") && !window.location.href.includes("/gp/product/")) {
+          return await findAndAddVerifiedProduct(action.value || "", false, "buy_now");
         }
+        return await clickBuyNowOnProductPage();
+      } else if (term.includes("add to cart") || term.includes("add cart") || term === "add to cart") {
+        const onSearchResults = document.querySelectorAll("[data-component-type='s-search-result'], .s-result-item[data-asin]:not([data-asin='']), .product-card").length > 0;
+        if (onSearchResults && !window.location.href.includes("/dp/") && !window.location.href.includes("/gp/product/")) {
+          return await findAndAddVerifiedProduct(action.value || "", false, "add_to_cart");
+        }
+        return await clickAddToCartOnProductPage();
       } else if (
         term.startsWith("open product") ||
         term.includes("open product") ||
@@ -942,8 +1101,10 @@ async function executeAgentAction(
         const rawClean = term
           .replace(/^(?:open|select)\s+product(?:\s*:)?\s*/i, "")
           .replace(/and\s+add\s+to\s+cart/i, "")
+          .replace(/and\s+buy\s+now/i, "")
           .trim();
-        const verifiedFinderRes = await findAndAddVerifiedProduct(rawClean || action.value || "", false);
+        const intent: "add_to_cart" | "buy_now" = /buy\s*now/i.test(term) ? "buy_now" : "add_to_cart";
+        const verifiedFinderRes = await findAndAddVerifiedProduct(rawClean || action.value || "", false, intent);
         return verifiedFinderRes;
       } else if (
         term.startsWith("play") ||
@@ -1073,7 +1234,7 @@ async function executeAgentAction(
       } else {
         // 2. Most prominent primary CTA on the page
         targetEl = document.querySelector<HTMLElement>(
-          "#add-to-cart-button, #btn-proceed-checkout, button[type='submit'], .btn-primary, button.primary, #proceed, #buy-now-button, #btn-track-order-9821, #btn-nav-cart"
+          "#add-to-cart-button, #btn-proceed-checkout, button[type='submit'], .btn-primary, button.primary, #proceed, #btn-track-order-9821, #btn-nav-cart"
         );
       }
     }
