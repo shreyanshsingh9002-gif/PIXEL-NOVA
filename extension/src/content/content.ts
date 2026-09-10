@@ -71,18 +71,52 @@ function isElementVisible(el: HTMLElement): boolean {
     return false;
   }
 
-  return (
-    rect.top < window.innerHeight &&
-    rect.bottom > 0 &&
-    rect.left < window.innerWidth &&
-    rect.right > 0
-  );
+  if (
+    rect.top >= window.innerHeight ||
+    rect.bottom <= 0 ||
+    rect.left >= window.innerWidth ||
+    rect.right <= 0
+  ) {
+    return false;
+  }
+
+  // Occlusion check: detect if element is occluded underneath an active modal, dialog, or overlay
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+  if (cx >= 0 && cx < window.innerWidth && cy >= 0 && cy < window.innerHeight) {
+    try {
+      const topEl = document.elementFromPoint(cx, cy);
+      if (topEl && !el.contains(topEl) && !topEl.contains(el)) {
+        const modal = topEl.closest<HTMLElement>(
+          'dialog[open], [role="dialog"], [aria-modal="true"], .modal, .modal-dialog, .swal2-container, .popup-container, .overlay, [class*="modal" i], [class*="dialog" i], [class*="popup" i]'
+        );
+        if (modal && !modal.contains(el)) {
+          return false; // Occluded beneath active modal/dialog: not visible on screen!
+        }
+      }
+    } catch {
+      // Ignore elementFromPoint errors
+    }
+  }
+
+  return true;
 }
 
 function getPageInformation(): PageInfo {
   const title = document.title || "Untitled Page";
   const url = window.location.href;
-  const text = (document.body?.innerText || "").trim();
+  let text = (document.body?.innerText || "").trim();
+
+  // Active Dialog / Modal Priority: If an active modal/dialog is visible, prioritize its prompt text at the top of context
+  const activeModal = document.querySelector<HTMLElement>(
+    'dialog[open], [role="dialog"]:not([style*="display: none"]):not([style*="visibility: hidden"]), [aria-modal="true"], .modal.show, .modal-dialog, .modal:not([style*="display: none"]):not([style*="visibility: hidden"]), [class*="modal" i]:not([style*="display: none"]):not([style*="visibility: hidden"]), [id*="modal" i]:not([style*="display: none"]):not([style*="visibility: hidden"])'
+  );
+  if (activeModal && isElementVisible(activeModal)) {
+    const modalText = (activeModal.innerText || "").trim();
+    if (modalText.length >= 10 && !text.startsWith(modalText)) {
+      text = `${modalText}\n\n${text}`;
+    }
+  }
 
   const candidates = Array.from(
     document.querySelectorAll<HTMLElement>(
@@ -149,10 +183,16 @@ function getPageInformation(): PageInfo {
       /\b[A-Z]{5}[0-9]{4}[A-Z]{1}\b/.test(valToCheck)
     );
 
+    const isSingleCharOtp =
+      tag === "input" &&
+      (el.getAttribute("maxlength") === "1" || el.getAttribute("size") === "1") &&
+      Boolean(el.closest(".otp-inputs, .otp-container, [class*='otp' i], [id*='otp' i], [class*='verification' i], [id*='verification' i], dialog, [role='dialog'], .modal"));
+
     const isSensitive =
       type === "password" ||
       type === "email" ||
       type === "tel" ||
+      isSingleCharOtp ||
       (name && /pass|card|cvv|cvc|expir|aadhaar|pan|pin|otp|address|city|state|zip|district|postal|email|mail|phone|tel|mobile|name|recipient|contact/i.test(name)) ||
       (id && /pass|card|cvv|cvc|expir|aadhaar|pan|pin|otp|address|city|state|zip|district|postal|email|mail|phone|tel|mobile|name|recipient|contact/i.test(id)) ||
       (placeholder && /pass|card|cvv|cvc|expir|aadhaar|pan|pin|otp|address|city|state|zip|district|postal|email|mail|phone|tel|mobile|name|recipient|contact/i.test(placeholder)) ||

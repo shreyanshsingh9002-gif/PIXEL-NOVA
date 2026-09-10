@@ -103,17 +103,29 @@ const PATTERNS: Array<{
   regex: RegExp;
   validator?: (match: string) => boolean;
 }> = [
-  // Email addresses
+  // Email addresses (including masked emails like shr**@kiet.edu or j***e@domain.com)
   {
     category: "EMAIL",
     risk: "LOW",
-    regex: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g
+    regex: /\b[A-Za-z0-9._%+*•x-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
+    validator: (match) => {
+      const parts = match.split("@");
+      if (parts.length !== 2) return false;
+      const [user, domain] = parts;
+      if (!/[A-Za-z0-9]/.test(user)) return false;
+      if (!domain.includes(".") || domain.length < 4) return false;
+      return true;
+    }
   },
-  // Indian Mobile numbers (+91 or 10-digit starting with 6-9)
+  // Indian Mobile numbers (+91 or 10-digit, including masked like 98****3210 or 98765*****)
   {
     category: "PHONE",
     risk: "MEDIUM",
-    regex: /(?:\+91[-.\s]?)?[6-9]\d{4}[-.\s]?\d{5}\b/g
+    regex: /(?:\+91[-.\s]?)?[6-9][\d*•x]{3,4}[-.\s]?[\d*•x]{4,5}\b/g,
+    validator: (match) => {
+      const clean = match.replace(/[^0-9*•x]/g, "");
+      return clean.length === 10 || (clean.length === 12 && clean.startsWith("91"));
+    }
   },
   // Standard International / US Phone numbers (strictly bound to avoid partial +91 collision)
   {
@@ -624,6 +636,25 @@ export function detectPIIInDOM(
     if (rect.width <= 0 || rect.height <= 0) return;
     if (!val || val.trim().length < 2) return;
 
+    // Occlusion check: Never assign coordinates to an element if it is occluded beneath an active modal dialog
+    if (typeof doc !== "undefined" && typeof doc.elementFromPoint === "function") {
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      if (cx >= 0 && cx < window.innerWidth && cy >= 0 && cy < window.innerHeight) {
+        try {
+          const topEl = doc.elementFromPoint(cx, cy);
+          if (topEl && !el.contains(topEl) && !topEl.contains(el)) {
+            const modal = topEl.closest<HTMLElement>(
+              'dialog[open], [role="dialog"], [aria-modal="true"], .modal, .modal-dialog, .swal2-container, .popup-container, .overlay, [class*="modal" i], [class*="dialog" i], [class*="popup" i]'
+            );
+            if (modal && !modal.contains(el)) {
+              return; // Occluded beneath modal: ignore ghost bounding box!
+            }
+          }
+        } catch {}
+      }
+    }
+
     // Strict boundary: Never let a single text entity adopt the dimensions of a massive page container!
     const boundedW = Math.min(rect.width, 480);
     const boundedH = Math.min(rect.height, 60);
@@ -840,6 +871,30 @@ export function detectPIIInDOM(
       helperAddEntityWithBox("OTP", val, "██████", "HIGH", el);
     }
   });
+
+  // 7B. Segmented OTP input boxes (e.g. 4 to 8 single-character inputs in an OTP modal or row)
+  const singleCharInputs = Array.from(doc.querySelectorAll<HTMLInputElement>(
+    "input[maxlength='1'], input[size='1'], input[type='tel'][maxlength='1'], input[pattern*='0-9']"
+  ));
+  if (singleCharInputs.length >= 4 && singleCharInputs.length <= 8) {
+    singleCharInputs.forEach((inp) => {
+      const val = (inp.value || "").trim() || "•";
+      helperAddEntityWithBox("OTP", val, "█", "HIGH", inp);
+    });
+  } else {
+    const otpContainers = doc.querySelectorAll<HTMLElement>(
+      "[class*='otp' i], [id*='otp' i], [class*='verification' i], [id*='verification' i], [class*='code' i]"
+    );
+    otpContainers.forEach((container) => {
+      const inputs = container.querySelectorAll<HTMLInputElement>("input");
+      if (inputs.length >= 4 && inputs.length <= 8) {
+        inputs.forEach((inp) => {
+          const val = (inp.value || "").trim() || "•";
+          helperAddEntityWithBox("OTP", val, "█", "HIGH", inp);
+        });
+      }
+    });
+  }
 
   // 8. UPI elements in static DOM (e.g. #val-upi or .upi-val)
   const upiEls = doc.querySelectorAll<HTMLElement>("[id*='upi' i], [class*='upi' i], [id*='vpa' i]");
