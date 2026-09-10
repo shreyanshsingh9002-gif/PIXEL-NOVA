@@ -1720,6 +1720,11 @@ function deepSearchPage(query: string): DeepNavResult {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "PING") {
+    sendResponse({ success: true, pong: true });
+    return true;
+  }
+
   if (message?.type === "GET_PAGE_INFO") {
     const pageInfo = getPageInformation();
     sendResponse({ success: true, data: pageInfo });

@@ -650,6 +650,42 @@ export function SidePanel() {
     }
   }
 
+  async function sendMessageWithAutoConnect(
+    tabId: number,
+    message: any,
+    retries = 2
+  ): Promise<any> {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const res = await chrome.tabs.sendMessage(tabId, message);
+        return res;
+      } catch (err: any) {
+        const isConnectionError =
+          err?.message?.includes("Receiving end does not exist") ||
+          err?.message?.includes("Could not establish connection") ||
+          err?.message?.includes("connection closed");
+
+        if (isConnectionError && attempt < retries) {
+          console.warn(`Content script missing on tab ${tabId}. Auto-injecting content.js (Attempt ${attempt + 1}/${retries})...`);
+          try {
+            await chrome.scripting.executeScript({
+              target: { tabId },
+              files: ["content.js"]
+            });
+            await new Promise((r) => setTimeout(r, 400));
+            continue;
+          } catch (injectErr) {
+            console.warn("Auto-injection failed:", injectErr);
+          }
+        }
+
+        if (attempt >= retries) {
+          throw err;
+        }
+      }
+    }
+  }
+
   async function handleAutoFillForm(customData?: Record<string, string>) {
     updateStatus("Local Vault: Injecting credentials on-device (0% network leak)...");
     try {
@@ -657,7 +693,7 @@ export function SidePanel() {
       const activeTab = tabs[0];
       if (!activeTab?.id) throw new Error("No active tab.");
 
-      const res = await chrome.tabs.sendMessage(activeTab.id, {
+      const res = await sendMessageWithAutoConnect(activeTab.id, {
         type: "AUTOFILL_FORM",
         profile: vault,
         customData
@@ -701,7 +737,7 @@ export function SidePanel() {
       const activeTab = tabs[0];
       if (!activeTab?.id) throw new Error("No active tab.");
 
-      const res = await chrome.tabs.sendMessage(activeTab.id, {
+      const res = await sendMessageWithAutoConnect(activeTab.id, {
         type: "DEEP_SEARCH",
         query
       });
@@ -752,35 +788,14 @@ export function SidePanel() {
     if (!activeTab?.id) throw new Error("No active browser tab found.");
 
     if (activeTab.url?.startsWith("chrome://") || activeTab.url?.startsWith("edge://")) {
-      throw new Error("Chrome security prohibits browser agents on internal 'chrome://' settings pages.");
+      throw new Error("Chrome security prohibits browser agents on internal 'chrome://' settings pages. Please navigate to a website (e.g. Amazon, Google, YouTube).");
     }
 
-    try {
-      const res = await chrome.tabs.sendMessage(activeTab.id, {
-        type: "GET_PAGE_INFO"
-      });
-      if (res?.success && res.data) {
-        return res.data;
-      }
-    } catch (msgErr) {
-      console.log("Tab missing content script, dynamically injecting content.js...");
-    }
-
-    try {
-      await chrome.scripting.executeScript({
-        target: { tabId: activeTab.id },
-        files: ["content.js"]
-      });
-      await new Promise((r) => setTimeout(r, 200));
-
-      const retryRes = await chrome.tabs.sendMessage(activeTab.id, {
-        type: "GET_PAGE_INFO"
-      });
-      if (retryRes?.success && retryRes.data) {
-        return retryRes.data;
-      }
-    } catch (injectErr) {
-      console.error("Auto-injection failed:", injectErr);
+    const res = await sendMessageWithAutoConnect(activeTab.id, {
+      type: "GET_PAGE_INFO"
+    });
+    if (res?.success && res.data) {
+      return res.data;
     }
 
     throw new Error("Could not extract page structure. Try reloading the tab once.");
@@ -1058,7 +1073,7 @@ export function SidePanel() {
     };
   }
 
-  async function executeActionInTab(action: AgentAction): Promise<{ success: boolean; result?: string; error?: string }> {
+  async function executeActionInTab(action: AgentAction): Promise<{ success: boolean; result?: string; error?: string; productFound?: boolean; productTitle?: string; navigatingToProduct?: boolean; addedDirectly?: boolean }> {
     let tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tabs || tabs.length === 0 || !tabs[0]?.id) {
       tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -1066,7 +1081,11 @@ export function SidePanel() {
     const activeTab = tabs?.[0];
     if (!activeTab?.id) throw new Error("No active browser tab found.");
 
-    const res = await chrome.tabs.sendMessage(activeTab.id, {
+    if (activeTab.url?.startsWith("chrome://") || activeTab.url?.startsWith("edge://")) {
+      throw new Error("Cannot run autonomous actions on internal browser settings pages. Please open a website (e.g. Amazon, Google, YouTube).");
+    }
+
+    const res = await sendMessageWithAutoConnect(activeTab.id, {
       type: "EXECUTE_ACTION",
       action
     });
