@@ -513,13 +513,12 @@ function parseProductQueryTokens(query: string): ProductQueryInfo {
     .replace(/^(?:open\s+product:\s*)/i, "")
     .trim();
 
+  // Keep all semantic keywords including laptop, phone, headphones, shoes, etc.
+  // Only exclude grammatical stop-words
+  const stopWords = ["for", "the", "and", "a", "an", "to", "in", "on", "of", "with", "at", "by", "from"];
   const words = clean
     .split(/\s+/)
-    .filter(
-      (w) =>
-        (w.length >= 2 || /\d/.test(w)) &&
-        !["for", "the", "and", "a", "an", "to", "in", "on", "of", "with", "chip", "laptop", "phone"].includes(w)
-    );
+    .filter((w) => (w.length >= 2 || /\d/.test(w)) && !stopWords.includes(w));
 
   const discriminators: string[] = [];
   for (const w of words) {
@@ -561,15 +560,15 @@ function scoreProductCardCandidate(
     }
   }
 
-  // 3. Prevent M-series chip confusion (e.g. M4 requested vs M5, M3, M2, M1)
+  // 3. Prevent chip confusion (e.g. M4 requested vs M5, M3, M2, M1)
   const mSeries = queryInfo.cleanQuery.match(/\bm([1-9])\b/i);
   if (mSeries) {
-    const targetM = mSeries[1];
+    const targetM = `m${mSeries[1]}`;
     const chipsInTitle = t.match(/\bm([1-9])\b/gi);
     if (chipsInTitle) {
-      const hasTargetChip = chipsInTitle.some((c) => c.toLowerCase() === `m${targetM}`);
+      const hasTargetChip = chipsInTitle.some((c) => c.toLowerCase() === targetM);
       if (!hasTargetChip) {
-        return { score: 0, isMatch: false, reason: `Conflicting chip detected (${chipsInTitle.join(", ")}) vs M${targetM}` };
+        return { score: 0, isMatch: false, reason: `Conflicting chip detected (${chipsInTitle.join(", ")}) vs ${targetM}` };
       }
     }
   }
@@ -580,7 +579,7 @@ function scoreProductCardCandidate(
   for (const w of queryInfo.words) {
     if (new RegExp(`\\b${w}\\b`, "i").test(t)) {
       matchedCount++;
-      score += queryInfo.discriminators.includes(w) ? 25 : 10;
+      score += queryInfo.discriminators.includes(w) ? 30 : 15;
     }
   }
 
@@ -588,16 +587,111 @@ function scoreProductCardCandidate(
     return { score: 0, isMatch: false, reason: "Insufficient keyword match" };
   }
 
-  if (isSponsored) score -= 15;
-  if (hasAddToCartBtn) score += 8;
+  // 5. Refurbished / Renewed penalty (prefer brand-new unless requested)
+  const isRenewed = /\b(?:refurbished|renewed|pre-owned|used)\b/i.test(t);
+  const wantsRenewed = /\b(?:refurbished|renewed|pre-owned|used)\b/i.test(queryInfo.cleanQuery);
+  if (isRenewed && !wantsRenewed) {
+    score -= 35;
+  }
 
-  return { score, isMatch: true, reason: `Verified Match (Score: ${score})` };
+  // 6. Base vs Pro/Max tier preference
+  if (!queryInfo.discriminators.includes("max") && /\bmax\b/i.test(t)) {
+    score -= 10;
+  }
+  if (!queryInfo.discriminators.includes("pro") && /\bpro\b/i.test(t)) {
+    score -= 5;
+  }
+
+  // 7. Sponsored penalty
+  if (isSponsored) score -= 20;
+  if (hasAddToCartBtn) score += 6;
+
+  return { score, isMatch: score > 0, reason: `Verified Match (Score: ${score})` };
+}
+
+async function clickAddToCartOnProductPage(): Promise<{ success: boolean; productFound?: boolean; productTitle?: string; result?: string; error?: string }> {
+  const cartSelectors = [
+    "#add-to-cart-button",
+    "input[name='submit.add-to-cart']",
+    "#submit\\.add-to-cart",
+    "#submit\\.add-to-cart-announce",
+    "button[name='submit.add-to-cart']",
+    "#add-to-cart-button-bb",
+    "#addToCart input",
+    "#addToCart_feature_div input",
+    "[data-action='add-to-cart']",
+    ".btn-cart",
+    "#buy-now-button",
+    "button._2KpZ6l._2U9uOA._3v1-ww",
+    "button._2KpZ6l._2U9uOA.ihZ85k._3AWRsL"
+  ];
+
+  let cartBtn: HTMLElement | null = null;
+
+  // Pass 1: Try finding immediately
+  for (const sel of cartSelectors) {
+    const el = document.querySelector<HTMLElement>(sel);
+    if (el && (el.offsetParent !== null || el.getClientRects().length > 0)) {
+      cartBtn = el;
+      break;
+    }
+  }
+
+  // Pass 2: Smooth scroll down to bring Buy Box / Specs into view
+  if (!cartBtn) {
+    window.scrollBy({ top: 550, behavior: "smooth" });
+    await new Promise((r) => setTimeout(r, 800));
+
+    for (const sel of cartSelectors) {
+      const el = document.querySelector<HTMLElement>(sel);
+      if (el) {
+        cartBtn = el;
+        break;
+      }
+    }
+  }
+
+  // Pass 3: Button text fallback
+  if (!cartBtn) {
+    const buttons = Array.from(document.querySelectorAll<HTMLElement>("button, input[type='button'], input[type='submit'], a.a-button-text"));
+    cartBtn = buttons.find((b) => /\badd\s+to\s+(?:cart|bag|basket)\b/i.test(b.innerText || b.getAttribute("value") || "")) || null;
+  }
+
+  if (!cartBtn) {
+    return {
+      success: false,
+      productFound: false,
+      error: "Could not locate 'Add to Cart' button on product page."
+    };
+  }
+
+  cartBtn.scrollIntoView({ behavior: "smooth", block: "center" });
+  await new Promise((r) => setTimeout(r, 600));
+
+  cartBtn.click();
+  await new Promise((r) => setTimeout(r, 1400));
+
+  // Dismiss any AppleCare / warranty upsell popup ("No thanks")
+  const noThanksBtn = document.querySelector<HTMLElement>(
+    "#attachSiNoCoverage, input[name='submit.attach-si-no-coverage'], #attach-sidesheet-view-cart-button, button[aria-label='Close'], #attach-close_sideSheet-link, .a-button-close"
+  );
+  if (noThanksBtn && (noThanksBtn.offsetParent !== null || noThanksBtn.getClientRects().length > 0)) {
+    noThanksBtn.click();
+    await new Promise((r) => setTimeout(r, 600));
+  }
+
+  return {
+    success: true,
+    productFound: true,
+    productTitle: document.title,
+    result: "Successfully scrolled to Buy Box and clicked 'Add to Cart' on product page!"
+  };
 }
 
 async function findAndAddVerifiedProduct(
   query: string,
   checkFirstViewOnly: boolean
-): Promise<{ success: boolean; productFound: boolean; productTitle?: string; result?: string; error?: string }> {
+): Promise<{ success: boolean; productFound: boolean; productTitle?: string; navigatingToProduct?: boolean; productUrl?: string; addedDirectly?: boolean; result?: string; error?: string }> {
   // A. Check if current page is ALREADY a specific product page (e.g. /dp/ on Amazon)
   const onProductPage =
     window.location.href.includes("/dp/") ||
@@ -605,20 +699,7 @@ async function findAndAddVerifiedProduct(
     document.querySelector("#add-to-cart-button, #buyNow") !== null;
 
   if (onProductPage) {
-    const directBtn = document.querySelector<HTMLElement>(
-      "#add-to-cart-button, input[name='submit.add-to-cart'], #submit\\.add-to-cart, #submit\\.add-to-cart-announce, button[name='submit.add-to-cart'], [data-action='add-to-cart'], .btn-cart, #buy-now-button"
-    );
-    if (directBtn && isElementVisible(directBtn)) {
-      directBtn.scrollIntoView({ behavior: "smooth", block: "center" });
-      await new Promise((r) => setTimeout(r, 400));
-      directBtn.click();
-      return {
-        success: true,
-        productFound: true,
-        productTitle: document.title,
-        result: `Added product directly to cart on product page.`
-      };
-    }
+    return await clickAddToCartOnProductPage();
   }
 
   // B. Search results page: locate all product result cards
@@ -627,7 +708,10 @@ async function findAndAddVerifiedProduct(
     document.querySelectorAll<HTMLElement>(
       "[data-component-type='s-search-result'], .s-result-item[data-asin]:not([data-asin='']), div[data-id], div._1AtVbE, .product-card, .product-item"
     )
-  );
+  ).filter((el) => {
+    // Avoid carousel / ad-banner widgets on Amazon
+    return el.closest(".s-widget-container:has(.a-carousel), [data-component-type='s-ads-widget'], [data-component-type='sp-sponsored-carousel'], .ad-holder") === null;
+  });
 
   if (cardElements.length === 0) {
     return {
@@ -653,7 +737,9 @@ async function findAndAddVerifiedProduct(
     const titleEl = card.querySelector<HTMLElement>(
       "h2 a, .s-title-instructions-style a, a.a-link-normal.s-underline-text, .KzDlHZ, a.wjcEIp, a.CG2Akx, .product-title a, h3 a"
     );
-    const title = (titleEl?.innerText || card.querySelector("h2, h3")?.textContent || "").trim();
+    const title = (titleEl?.textContent || card.querySelector("h2, h3")?.textContent || "")
+      .replace(/\s+/g, " ")
+      .trim();
     if (!title || title.length < 5) continue;
 
     const isSponsored =
@@ -705,7 +791,7 @@ async function findAndAddVerifiedProduct(
   best.cardEl.scrollIntoView({ behavior: "smooth", block: "center" });
   await new Promise((r) => setTimeout(r, 600));
 
-  // Option 1: Click the verified card's inline Add to Cart button
+  // Option 1: Click the verified card's inline Add to Cart button if present
   if (best.addToCartBtn && isElementVisible(best.addToCartBtn)) {
     best.addToCartBtn.click();
     await new Promise((r) => setTimeout(r, 1200));
@@ -713,6 +799,7 @@ async function findAndAddVerifiedProduct(
       success: true,
       productFound: true,
       productTitle: best.title,
+      addedDirectly: true,
       result: `Successfully added verified product "${best.title}" to cart!`
     };
   }
@@ -725,6 +812,8 @@ async function findAndAddVerifiedProduct(
       success: true,
       productFound: true,
       productTitle: best.title,
+      navigatingToProduct: true,
+      productUrl: productHref,
       result: `Opening verified product "${best.title}"...`
     };
   }
@@ -735,6 +824,7 @@ async function findAndAddVerifiedProduct(
       success: true,
       productFound: true,
       productTitle: best.title,
+      navigatingToProduct: true,
       result: `Clicked verified product "${best.title}".`
     };
   }
@@ -794,6 +884,10 @@ async function executeAgentAction(
     if (action.action === "find_and_add_product") {
       const query = action.value || action.targetText || "";
       const checkFirstViewOnly = action.amount === 1;
+      const isDirectOnProductPage = action.amount === 2;
+      if (isDirectOnProductPage) {
+        return await clickAddToCartOnProductPage();
+      }
       return await findAndAddVerifiedProduct(query, checkFirstViewOnly);
     }
 

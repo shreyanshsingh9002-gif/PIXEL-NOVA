@@ -1232,6 +1232,52 @@ export function SidePanel() {
           updateStatus(`E-Commerce Flow: Checking search results for "${productQuery}"...`);
           await new Promise((r) => setTimeout(r, 2200)); // allow search results to render
 
+          const handleProductFound = async (res: any) => {
+            if (res.navigatingToProduct) {
+              updateStatus(`🌐 Opened product page for "${res.productTitle}". Waiting for page to load...`);
+              await new Promise((r) => setTimeout(r, 4200));
+              await observeAndProtect().catch(() => {});
+
+              updateStatus(`📜 Scrolling to Buy Box and adding "${res.productTitle}" to cart...`);
+              const addRes = await executeActionInTab({
+                action: "find_and_add_product",
+                value: productQuery,
+                amount: 2, // 2 = direct on-page add to cart
+                thought: `Scrolling down and clicking Add to Cart on product page for '${res.productTitle}'`
+              });
+
+              if (addRes.success) {
+                updateStatus(`🎉 Completed: "${res.productTitle}" added to cart!`);
+                setSteps((prev) => [
+                  ...prev,
+                  {
+                    stepIndex: prev.length + 1,
+                    timestamp: Date.now(),
+                    goal: subGoal,
+                    action: { action: "find_and_add_product", value: productQuery, thought: "Added verified product to cart" },
+                    status: "completed",
+                    result: addRes.result || `Verified product "${res.productTitle}" added to cart successfully on product page.`
+                  }
+                ]);
+              } else {
+                updateStatus(`Product page opened. ${addRes.error || "Please select product options to add to cart"}`);
+              }
+            } else {
+              updateStatus(`🎉 Completed: "${res.productTitle}" added to cart!`);
+              setSteps((prev) => [
+                ...prev,
+                {
+                  stepIndex: prev.length + 1,
+                  timestamp: Date.now(),
+                  goal: subGoal,
+                  action: { action: "find_and_add_product", value: productQuery, thought: "Added verified product directly" },
+                  status: "completed",
+                  result: res.result || `Added "${res.productTitle}" to cart directly.`
+                }
+              ]);
+            }
+          };
+
           // Step 1: Check FIRST VIEW (initial viewport) for the genuine matching product
           updateStatus(`Step 1/2: Inspecting first view for actual product "${productQuery}"...`);
           const firstViewAction: AgentAction = {
@@ -1243,22 +1289,10 @@ export function SidePanel() {
           const firstViewRes = await executeActionInTab(firstViewAction);
 
           if (firstViewRes.success && firstViewRes.productFound) {
-            updateStatus(`Found actual product in first view: "${firstViewRes.productTitle}". Added to cart!`);
-            setSteps((prev) => [
-              ...prev,
-              {
-                stepIndex: prev.length + 1,
-                timestamp: Date.now(),
-                goal: subGoal,
-                action: firstViewAction,
-                status: "completed",
-                result: firstViewRes.result || `Added "${firstViewRes.productTitle}" to cart directly from first view.`
-              }
-            ]);
+            await handleProductFound(firstViewRes);
             // STOP UNNECESSARY THINGS: Clean finish!
             isRunningRef.current = false;
             setIsRunning(false);
-            updateStatus(`Completed: Verified "${firstViewRes.productTitle}" added to cart!`);
             return;
           }
 
@@ -1294,23 +1328,7 @@ export function SidePanel() {
           }
 
           if (foundAfterScroll && finalScrollRes) {
-            updateStatus(`Found actual product after scroll: "${finalScrollRes.productTitle}". Added to cart!`);
-            setSteps((prev) => [
-              ...prev,
-              {
-                stepIndex: prev.length + 1,
-                timestamp: Date.now(),
-                goal: subGoal,
-                action: {
-                  action: "find_and_add_product",
-                  value: productQuery,
-                  thought: `Verified product '${finalScrollRes.productTitle}' found after scroll`
-                },
-                status: "completed",
-                result: finalScrollRes.result || `Found and added "${finalScrollRes.productTitle}" to cart after scrolling.`
-              }
-            ]);
-            updateStatus(`Completed: Verified "${finalScrollRes.productTitle}" added to cart!`);
+            await handleProductFound(finalScrollRes);
           } else {
             updateStatus(`Could not locate verified "${productQuery}" in search results.`);
             setError(`Could not locate verified "${productQuery}" in search results.`);
