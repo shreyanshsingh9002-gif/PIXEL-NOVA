@@ -39,10 +39,10 @@ function getUniqueSelector(el: Element): string {
         selector += `.${CSS.escape(firstClass)}`;
       }
     }
-    const parent = current.parentElement;
+    const parent: HTMLElement | null = current.parentElement;
     if (parent) {
       const siblings = Array.from(parent.children).filter(
-        (c) => c.tagName === current?.tagName
+        (c: Element) => c.tagName === current?.tagName
       );
       if (siblings.length > 1) {
         const index = siblings.indexOf(current) + 1;
@@ -609,7 +609,7 @@ function scoreProductCardCandidate(
   return { score, isMatch: score > 0, reason: `Verified Match (Score: ${score})` };
 }
 
-async function clickAddToCartOnProductPage(): Promise<{ success: boolean; productFound?: boolean; productTitle?: string; result?: string; error?: string }> {
+async function clickAddToCartOnProductPage(): Promise<{ success: boolean; productFound: boolean; productTitle?: string; result?: string; error?: string }> {
   const cartSelectors = [
     "#add-to-cart-button",
     "input[name='submit.add-to-cart']",

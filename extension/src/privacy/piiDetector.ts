@@ -124,6 +124,7 @@ const PATTERNS: Array<{
   // Indian Aadhaar Number: 12 digits, often 4-4-4 formatted (Lookahead prevents matching 16-digit cards)
   {
     category: "AADHAAR",
+    risk: "HIGH",
     regex: /(?<!\d[-\s]?)\b[2-9]\d{3}[-\s]?\d{4}[-\s]?\d{4}\b(?![-\s]?\d)/g,
     validator: (match) => {
       const clean = match.replace(/\D/g, "");

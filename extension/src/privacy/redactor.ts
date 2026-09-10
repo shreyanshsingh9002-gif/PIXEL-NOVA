@@ -71,7 +71,7 @@ export async function redactVisualScreenshot(
 ): Promise<string> {
   if (!rawScreenshotUrl) return "";
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.onload = () => {

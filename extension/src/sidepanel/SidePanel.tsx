@@ -9,7 +9,9 @@ import {
   PrivacyTelemetryAudit,
   LocalVisionResult,
   CustomShortcut,
-  ShortcutIconType
+  ShortcutIconType,
+  PIIEntity,
+  PrivacyScore
 } from "../shared/types";
 import { detectPII, deduplicateEntities } from "../privacy/piiDetector";
 import {
@@ -454,7 +456,7 @@ export function SidePanel() {
     if (typeof chrome !== "undefined" && chrome.storage?.local) {
       chrome.storage.local.get(["pixelNovaVault", "pixelNovaShortcuts"], (res) => {
         if (res?.pixelNovaVault) {
-          setVault(res.pixelNovaVault);
+          setVault(res.pixelNovaVault as UserVaultProfile);
         }
         if (res?.pixelNovaShortcuts && Array.isArray(res.pixelNovaShortcuts) && res.pixelNovaShortcuts.length > 0) {
           setShortcuts(res.pixelNovaShortcuts);
@@ -892,6 +894,23 @@ export function SidePanel() {
 
     setSanitizedContext(sanitized);
     return sanitized;
+  }
+
+  async function handleScanEntities() {
+    if (isScanningEntities) return;
+    setIsScanningEntities(true);
+    setError("");
+    updateStatus("Privacy Engine: Scanning active tab for sensitive PII entities...");
+    try {
+      const sanitized = await observeAndProtect();
+      const count = sanitized?.piiEntities?.length || 0;
+      updateStatus(`Entity Audit Complete: ${count} sensitive items detected & shielded.`);
+    } catch (err: any) {
+      console.warn("Entities scan encountered error:", err);
+      setError(err?.message || "Failed to scan entities on active tab.");
+    } finally {
+      setIsScanningEntities(false);
+    }
   }
 
   async function requestBrainPlan(context: SanitizedContext, userGoal: string): Promise<AgentAction> {
@@ -1936,7 +1955,7 @@ export function SidePanel() {
               >
                 <EyeIcon size={13} /> Scan
               </button>
-              <button className="btn-run" onClick={runAutonomousLoop}>
+              <button className="btn-run" onClick={() => runAutonomousLoop()}>
                 <ZapIcon size={13} /> Run Agent
               </button>
             </div>
@@ -2463,7 +2482,7 @@ export function SidePanel() {
               </div>
             </div>
 
-            <button className="btn-autofill" onClick={handleAutoFillForm}>
+            <button className="btn-autofill" onClick={() => handleAutoFillForm()}>
               <ZapIcon size={14} className="text-amber" />
               <span>Auto-Fill Current Page Form (Zero-Leak)</span>
             </button>

@@ -45,7 +45,7 @@ function waitForTabReady(tabId: number, timeoutMs = 12000): Promise<boolean> {
   return new Promise((resolve) => {
     let timer: any = null;
 
-    const listener = (updatedTabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
+    const listener = (updatedTabId: number, changeInfo: { status?: string }) => {
       if (updatedTabId === tabId && changeInfo.status === "complete") {
         cleanup();
         resolve(true);

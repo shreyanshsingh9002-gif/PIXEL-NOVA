@@ -17,6 +17,7 @@ export interface InteractiveElement {
   id: string;
   name: string | null;
   selector: string;
+  role?: string | null;
   boundingBox: BoundingBox;
   isVisible: boolean;
   isSensitive?: boolean;
