@@ -114,16 +114,24 @@ export async function redactVisualScreenshot(
 
       // Convert raw bounding boxes to canvas scale with small padding
       const initialBoxes: ScaledBox[] = [];
+      // HARD CEILING: Visual PII redaction boxes must never swallow massive viewport sections
+      const MAX_BOX_WIDTH = Math.min(520 * scale, canvas.width * 0.60);
+      const MAX_BOX_HEIGHT = Math.min(80 * scale, canvas.height * 0.15);
+
       for (const entity of entities) {
         if (!entity.boundingBox) continue;
         const { x, y, width, height } = entity.boundingBox;
         if (width <= 0 || height <= 0) continue;
 
+        // Never let a bounding box exceed reasonable single-field PII limits
+        const safeW = Math.min(width * scale + 4, MAX_BOX_WIDTH);
+        const safeH = Math.min(height * scale + 4, MAX_BOX_HEIGHT);
+
         initialBoxes.push({
           x: x * scale - 2,
           y: y * scale - 2,
-          w: width * scale + 4,
-          h: height * scale + 4,
+          w: safeW,
+          h: safeH,
           categories: new Set([entity.category || "PII"]),
           hasML: entity.detectionSource === "ML_EDGE_MODEL",
           isHighRisk: entity.risk === "HIGH"
@@ -138,26 +146,33 @@ export async function redactVisualScreenshot(
         let merged = false;
         for (const target of mergedBoxes) {
           // Check collision or close proximity
+          // Constrain merge to the same text line/row to prevent multi-line screen cascading
+          const isSameRow = Math.abs(box.y - target.y) <= 20 * scale;
           const xOverlap = box.x < target.x + target.w + PADDING_THRESHOLD && box.x + box.w + PADDING_THRESHOLD > target.x;
           const yOverlap = box.y < target.y + target.h + PADDING_THRESHOLD && box.y + box.h + PADDING_THRESHOLD > target.y;
 
-          if (xOverlap && yOverlap) {
+          if (isSameRow && xOverlap && yOverlap) {
             // Compute bounding box union
             const minX = Math.min(box.x, target.x);
             const minY = Math.min(box.y, target.y);
             const maxX = Math.max(box.x + box.w, target.x + target.w);
             const maxY = Math.max(box.y + box.h, target.y + target.h);
+            const unionW = maxX - minX;
+            const unionH = maxY - minY;
 
-            target.x = minX;
-            target.y = minY;
-            target.w = maxX - minX;
-            target.h = maxY - minY;
-            box.categories.forEach((c) => target.categories.add(c));
-            target.hasML = target.hasML || box.hasML;
-            target.isHighRisk = target.isHighRisk || box.isHighRisk;
+            // Only merge if the union remains within acceptable field dimensions
+            if (unionW <= MAX_BOX_WIDTH && unionH <= MAX_BOX_HEIGHT) {
+              target.x = minX;
+              target.y = minY;
+              target.w = unionW;
+              target.h = unionH;
+              box.categories.forEach((c) => target.categories.add(c));
+              target.hasML = target.hasML || box.hasML;
+              target.isHighRisk = target.isHighRisk || box.isHighRisk;
 
-            merged = true;
-            break;
+              merged = true;
+              break;
+            }
           }
         }
         if (!merged) {

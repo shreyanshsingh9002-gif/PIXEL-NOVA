@@ -653,7 +653,7 @@ export function SidePanel() {
   async function sendMessageWithAutoConnect(
     tabId: number,
     message: any,
-    retries = 2
+    retries = 3
   ): Promise<any> {
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
@@ -672,7 +672,8 @@ export function SidePanel() {
               target: { tabId },
               files: ["content.js"]
             });
-            await new Promise((r) => setTimeout(r, 400));
+            // Give complex pages (like Amazon) sufficient time to initialize content script listeners
+            await new Promise((r) => setTimeout(r, 650));
             continue;
           } catch (injectErr) {
             console.warn("Auto-injection failed:", injectErr);
@@ -802,6 +803,7 @@ export function SidePanel() {
   }
 
   async function observeAndProtect(): Promise<SanitizedContext> {
+    setError("");
     updateStatus("Local Eyes: Scanning DOM & Visual elements...");
     const rawInfo = await fetchPageInfo();
     setPageInfo(rawInfo);
@@ -1921,7 +1923,14 @@ export function SidePanel() {
             <div className="btn-group-actions">
               <button
                 className="btn-scan"
-                onClick={() => observeAndProtect()}
+                onClick={async () => {
+                  try {
+                    setError("");
+                    await observeAndProtect();
+                  } catch (e: any) {
+                    setError(e.message || "Failed to scan active tab. Ensure you are on a webpage (not chrome://).");
+                  }
+                }}
                 disabled={isRunning}
                 title="Scan current page & redact on-device without running clicks"
               >

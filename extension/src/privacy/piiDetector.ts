@@ -623,20 +623,26 @@ export function detectPIIInDOM(
     if (rect.width <= 0 || rect.height <= 0) return;
     if (!val || val.trim().length < 2) return;
 
+    // Strict boundary: Never let a single text entity adopt the dimensions of a massive page container!
+    const boundedW = Math.min(rect.width, 480);
+    const boundedH = Math.min(rect.height, 60);
+
+    const safeBox: BoundingBox = {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y),
+      width: Math.round(boundedW),
+      height: Math.round(boundedH),
+      top: Math.round(rect.top),
+      left: Math.round(rect.left)
+    };
+
     const key = getCanonicalEntityKey(category, val);
     const existing = entities.find(
       (e) => getCanonicalEntityKey(e.category, e.value) === key
     );
     if (existing) {
       if (!existing.boundingBox) {
-        existing.boundingBox = {
-          x: Math.round(rect.x),
-          y: Math.round(rect.y),
-          width: Math.round(rect.width),
-          height: Math.round(rect.height),
-          top: Math.round(rect.top),
-          left: Math.round(rect.left)
-        };
+        existing.boundingBox = safeBox;
       }
       if (val.length > existing.value.length && (val.includes("+") || val.includes("@") || val.includes(" ") || val.includes("-"))) {
         existing.value = val;
@@ -649,14 +655,7 @@ export function detectPIIInDOM(
         value: val,
         maskedValue,
         risk,
-        boundingBox: {
-          x: Math.round(rect.x),
-          y: Math.round(rect.y),
-          width: Math.round(rect.width),
-          height: Math.round(rect.height),
-          top: Math.round(rect.top),
-          left: Math.round(rect.left)
-        }
+        boundingBox: safeBox
       });
     }
   };
@@ -812,8 +811,22 @@ export function detectPIIInDOM(
     if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") return;
     const role = (el.getAttribute("role") || "").toLowerCase();
     if (role === "search" || role === "searchbox" || el.closest("form[role='search'], [role='search']")) return;
+
+    // Reject substring collisions (e.g. "velocity" on Amazon, "opacity-100", "capacity", "electricity", etc.)
+    const id = (el.id || "").toLowerCase();
+    const cls = (el.className || "").toString().toLowerCase();
+    const isRealAddressIdentifier =
+      /\b(?:address|street|delivery-address|shipping-address|pincode|zipcode|postal-code)\b/i.test(`${id} ${cls}`) ||
+      /\bcity\b/i.test(`${id} ${cls}`);
+
+    if (!isRealAddressIdentifier) return;
+
+    // Reject giant layout containers (e.g. #address-book-wrapper, #nav-global-location-slot)
+    const rect = el.getBoundingClientRect();
+    if (rect.width > 500 || rect.height > 100 || rect.width <= 0 || rect.height <= 0) return;
+
     const val = (el.innerText || (el as HTMLInputElement).value || "").trim();
-    if (val.length >= 3) {
+    if (val.length >= 3 && val.length <= 150) {
       helperAddEntityWithBox("ADDRESS", val, "[REDACTED_ADDRESS]", "MEDIUM", el);
     }
   });
@@ -929,11 +942,14 @@ export function detectPIIInDOM(
         if (el.children.length <= 2 && (el.innerText || "").toLowerCase().includes(val.toLowerCase())) {
           const rect = el.getBoundingClientRect();
           if (rect.width > 0 && rect.height > 0) {
+            // Strict bound: Never assign layout container dimensions to a text match
+            const boundedW = Math.min(rect.width, 480);
+            const boundedH = Math.min(rect.height, 60);
             entity.boundingBox = {
               x: Math.round(rect.x),
               y: Math.round(rect.y),
-              width: Math.round(rect.width),
-              height: Math.round(rect.height),
+              width: Math.round(boundedW),
+              height: Math.round(boundedH),
               top: Math.round(rect.top),
               left: Math.round(rect.left)
             };
@@ -949,14 +965,16 @@ export function detectPIIInDOM(
       for (const inp of allInputs) {
         const inpVal = (inp.value || "").trim().toLowerCase();
         const targetVal = val.toLowerCase();
-        if (inpVal && (inpVal === targetVal || inpVal.includes(targetVal) || targetVal.includes(inpVal))) {
+        if (inpVal.length >= 3 && targetVal.length >= 3 && (inpVal === targetVal || inpVal.includes(targetVal) || targetVal.includes(inpVal))) {
           const rect = inp.getBoundingClientRect();
           if (rect.width > 0 && rect.height > 0) {
+            const boundedW = Math.min(rect.width, 480);
+            const boundedH = Math.min(rect.height, 60);
             entity.boundingBox = {
               x: Math.round(rect.x),
               y: Math.round(rect.y),
-              width: Math.round(rect.width),
-              height: Math.round(rect.height),
+              width: Math.round(boundedW),
+              height: Math.round(boundedH),
               top: Math.round(rect.top),
               left: Math.round(rect.left)
             };
