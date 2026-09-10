@@ -141,7 +141,8 @@ export type AgentActionType =
   | "press_key"
   | "hover"
   | "finish"
-  | "confirm_action";
+  | "confirm_action"
+  | "find_and_add_product";
 
 export interface AgentAction {
   action: AgentActionType;

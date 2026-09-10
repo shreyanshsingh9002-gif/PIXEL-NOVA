@@ -498,9 +498,257 @@ async function findAndFocusSearchInput(): Promise<HTMLInputElement | HTMLTextAre
   return null;
 }
 
+interface ProductQueryInfo {
+  cleanQuery: string;
+  words: string[];
+  discriminators: string[];
+}
+
+function parseProductQueryTokens(query: string): ProductQueryInfo {
+  const clean = (query || "")
+    .toLowerCase()
+    .replace(/^(?:search(?:\s+for)?|find|buy|order|open|get|add\s*(?:it)?\s*to\s*cart)\s*/i, "")
+    .replace(/\s+(?:in|on|at)\s+[a-z0-9.-]+$/i, "")
+    .replace(/\s+and\s+add\s+to\s+cart.*$/i, "")
+    .replace(/^(?:open\s+product:\s*)/i, "")
+    .trim();
+
+  const words = clean
+    .split(/\s+/)
+    .filter(
+      (w) =>
+        (w.length >= 2 || /\d/.test(w)) &&
+        !["for", "the", "and", "a", "an", "to", "in", "on", "of", "with", "chip", "laptop", "phone"].includes(w)
+    );
+
+  const discriminators: string[] = [];
+  for (const w of words) {
+    if (/\d/.test(w) || ["pro", "max", "plus", "ultra", "air", "mini", "lite"].includes(w)) {
+      discriminators.push(w);
+    }
+  }
+
+  return { cleanQuery: clean, words, discriminators };
+}
+
+const ECOMMERCE_ACCESSORY_WORDS = [
+  "case", "cover", "sleeve", "skin", "pouch", "bag", "protector", "tempered glass",
+  "adapter", "cable", "charger", "cord", "hub", "dock", "stand", "holder", "mount",
+  "strap", "band", "shell", "guard", "decal", "sticker", "cleaning kit", "replacement",
+  "stylus", "pen"
+];
+
+function scoreProductCardCandidate(
+  title: string,
+  queryInfo: ProductQueryInfo,
+  isSponsored: boolean,
+  hasAddToCartBtn: boolean
+): { score: number; isMatch: boolean; reason: string } {
+  const t = title.toLowerCase();
+
+  // 1. Filter out accessories unless query explicitly requested an accessory
+  const isAccessory = ECOMMERCE_ACCESSORY_WORDS.some((acc) => new RegExp(`\\b${acc}\\b`, "i").test(t));
+  const wantsAccessory = queryInfo.words.some((w) => ECOMMERCE_ACCESSORY_WORDS.includes(w));
+  if (isAccessory && !wantsAccessory) {
+    return { score: 0, isMatch: false, reason: "Filtered accessory (case/stand/cover)" };
+  }
+
+  // 2. Strict Discriminator Matching (e.g. "m4" MUST be present if requested)
+  for (const disc of queryInfo.discriminators) {
+    const discReg = new RegExp(`\\b${disc}\\b`, "i");
+    if (!discReg.test(t)) {
+      return { score: 0, isMatch: false, reason: `Missing mandatory model discriminator '${disc}'` };
+    }
+  }
+
+  // 3. Prevent M-series chip confusion (e.g. M4 requested vs M5, M3, M2, M1)
+  const mSeries = queryInfo.cleanQuery.match(/\bm([1-9])\b/i);
+  if (mSeries) {
+    const targetM = mSeries[1];
+    const chipsInTitle = t.match(/\bm([1-9])\b/gi);
+    if (chipsInTitle) {
+      const hasTargetChip = chipsInTitle.some((c) => c.toLowerCase() === `m${targetM}`);
+      if (!hasTargetChip) {
+        return { score: 0, isMatch: false, reason: `Conflicting chip detected (${chipsInTitle.join(", ")}) vs M${targetM}` };
+      }
+    }
+  }
+
+  // 4. Overlap scoring
+  let matchedCount = 0;
+  let score = 0;
+  for (const w of queryInfo.words) {
+    if (new RegExp(`\\b${w}\\b`, "i").test(t)) {
+      matchedCount++;
+      score += queryInfo.discriminators.includes(w) ? 25 : 10;
+    }
+  }
+
+  if (queryInfo.words.length > 0 && matchedCount / queryInfo.words.length < 0.5) {
+    return { score: 0, isMatch: false, reason: "Insufficient keyword match" };
+  }
+
+  if (isSponsored) score -= 15;
+  if (hasAddToCartBtn) score += 8;
+
+  return { score, isMatch: true, reason: `Verified Match (Score: ${score})` };
+}
+
+async function findAndAddVerifiedProduct(
+  query: string,
+  checkFirstViewOnly: boolean
+): Promise<{ success: boolean; productFound: boolean; productTitle?: string; result?: string; error?: string }> {
+  // A. Check if current page is ALREADY a specific product page (e.g. /dp/ on Amazon)
+  const onProductPage =
+    window.location.href.includes("/dp/") ||
+    window.location.href.includes("/gp/product/") ||
+    document.querySelector("#add-to-cart-button, #buyNow") !== null;
+
+  if (onProductPage) {
+    const directBtn = document.querySelector<HTMLElement>(
+      "#add-to-cart-button, input[name='submit.add-to-cart'], #submit\\.add-to-cart, #submit\\.add-to-cart-announce, button[name='submit.add-to-cart'], [data-action='add-to-cart'], .btn-cart, #buy-now-button"
+    );
+    if (directBtn && isElementVisible(directBtn)) {
+      directBtn.scrollIntoView({ behavior: "smooth", block: "center" });
+      await new Promise((r) => setTimeout(r, 400));
+      directBtn.click();
+      return {
+        success: true,
+        productFound: true,
+        productTitle: document.title,
+        result: `Added product directly to cart on product page.`
+      };
+    }
+  }
+
+  // B. Search results page: locate all product result cards
+  const queryInfo = parseProductQueryTokens(query);
+  const cardElements = Array.from(
+    document.querySelectorAll<HTMLElement>(
+      "[data-component-type='s-search-result'], .s-result-item[data-asin]:not([data-asin='']), div[data-id], div._1AtVbE, .product-card, .product-item"
+    )
+  );
+
+  if (cardElements.length === 0) {
+    return {
+      success: false,
+      productFound: false,
+      error: "No product cards detected on the current page."
+    };
+  }
+
+  interface ScoredCard {
+    cardEl: HTMLElement;
+    titleEl: HTMLElement | null;
+    title: string;
+    score: number;
+    isInFirstView: boolean;
+    hasAddToCart: boolean;
+    addToCartBtn: HTMLElement | null;
+  }
+
+  const scoredCards: ScoredCard[] = [];
+
+  for (const card of cardElements) {
+    const titleEl = card.querySelector<HTMLElement>(
+      "h2 a, .s-title-instructions-style a, a.a-link-normal.s-underline-text, .KzDlHZ, a.wjcEIp, a.CG2Akx, .product-title a, h3 a"
+    );
+    const title = (titleEl?.innerText || card.querySelector("h2, h3")?.textContent || "").trim();
+    if (!title || title.length < 5) continue;
+
+    const isSponsored =
+      card.querySelector(".puis-sponsored-label-text, .s-sponsored-label-text, [data-component-type='sp-sponsored-result']") !== null ||
+      /\bsponsored\b/i.test(card.innerText || "");
+
+    const addToCartBtn = card.querySelector<HTMLElement>(
+      "[data-component-type='s-add-to-cart-button'] button, button[name='submit.add-to-cart'], button.a-button-text[name*='add-to-cart'], [data-action='add-to-cart'], .s-add-to-cart-button button"
+    );
+    const hasAddToCart = addToCartBtn !== null && isElementVisible(addToCartBtn);
+
+    const rect = card.getBoundingClientRect();
+    // In first view: top of card is within active viewport window
+    const isInFirstView = rect.top < window.innerHeight + 60 && rect.bottom > 40;
+
+    if (checkFirstViewOnly && !isInFirstView) {
+      continue;
+    }
+
+    const { isMatch, score } = scoreProductCardCandidate(title, queryInfo, isSponsored, hasAddToCart);
+    if (isMatch && score > 0) {
+      scoredCards.push({
+        cardEl: card,
+        titleEl,
+        title,
+        score,
+        isInFirstView,
+        hasAddToCart,
+        addToCartBtn
+      });
+    }
+  }
+
+  if (scoredCards.length === 0) {
+    return {
+      success: false,
+      productFound: false,
+      error: checkFirstViewOnly
+        ? `No genuine match for "${queryInfo.cleanQuery}" visible in the first view.`
+        : `Could not find verified match for "${queryInfo.cleanQuery}" after scanning visible cards.`
+    };
+  }
+
+  // Sort best match to top
+  scoredCards.sort((a, b) => b.score - a.score);
+  const best = scoredCards[0];
+
+  // Scroll the verified card into center view
+  best.cardEl.scrollIntoView({ behavior: "smooth", block: "center" });
+  await new Promise((r) => setTimeout(r, 600));
+
+  // Option 1: Click the verified card's inline Add to Cart button
+  if (best.addToCartBtn && isElementVisible(best.addToCartBtn)) {
+    best.addToCartBtn.click();
+    await new Promise((r) => setTimeout(r, 1200));
+    return {
+      success: true,
+      productFound: true,
+      productTitle: best.title,
+      result: `Successfully added verified product "${best.title}" to cart!`
+    };
+  }
+
+  // Option 2: Navigate to product page directly in the SAME tab
+  const productHref = (best.titleEl as HTMLAnchorElement)?.href;
+  if (productHref) {
+    window.location.href = productHref;
+    return {
+      success: true,
+      productFound: true,
+      productTitle: best.title,
+      result: `Opening verified product "${best.title}"...`
+    };
+  }
+
+  if (best.titleEl) {
+    best.titleEl.click();
+    return {
+      success: true,
+      productFound: true,
+      productTitle: best.title,
+      result: `Clicked verified product "${best.title}".`
+    };
+  }
+
+  return {
+    success: false,
+    productFound: false,
+    error: `Located "${best.title}" but could not trigger navigation or add-to-cart.`
+  };
+}
+
 async function executeAgentAction(
   action: AgentAction
-): Promise<{ success: boolean; result?: string; error?: string }> {
+): Promise<{ success: boolean; result?: string; error?: string; productFound?: boolean; productTitle?: string }> {
   try {
     if (action.action === "scroll") {
       // 1. Scroll directly to targeted text or selector if specified
@@ -543,6 +791,12 @@ async function executeAgentAction(
       return { success: true, result: "Task marked completed by agent" };
     }
 
+    if (action.action === "find_and_add_product") {
+      const query = action.value || action.targetText || "";
+      const checkFirstViewOnly = action.amount === 1;
+      return await findAndAddVerifiedProduct(query, checkFirstViewOnly);
+    }
+
     let targetEl: HTMLElement | null = null;
     if (typeof action.targetIndex === "number") {
       const pageInfo = getPageInformation();
@@ -569,8 +823,9 @@ async function executeAgentAction(
         targetEl = document.querySelector<HTMLElement>(
           "#add-to-cart-button, input[name='submit.add-to-cart'], #submit\\.add-to-cart, #submit\\.add-to-cart-announce, button[name='submit.add-to-cart'], [data-action='add-to-cart'], [aria-label*='Add to Cart' i], [title*='Add to Cart' i], .a-button-input[value*='Add to Cart' i], button.btn-cart, button[id*='add-to-cart'], button[name*='add-to-cart'], form[action*='cart'] button[type='submit'], #submit\\.add-to-cart, #add-to-cart-button-bb, #addToCart, #addToCart_feature_div input, #addToCart_feature_div .a-button-inner"
         );
-        if (!targetEl) {
-          targetEl = document.querySelector<HTMLElement>("[data-component-type='s-add-to-cart-button'] button, button.a-button-text[name*='add-to-cart']");
+        // Only click search result button if on a specific single product page or if explicit value passed
+        if (!targetEl && action.value) {
+          return await findAndAddVerifiedProduct(action.value, false);
         }
       } else if (
         term.startsWith("open product") ||
@@ -589,57 +844,13 @@ async function executeAgentAction(
           };
         }
 
-        // Extract query terms (e.g. "acer", "aspire", "5", "macbook", "laptop")
+        // Delegate to high-precision product finder
         const rawClean = term
           .replace(/^(?:open|select)\s+product(?:\s*:)?\s*/i, "")
           .replace(/and\s+add\s+to\s+cart/i, "")
-          .trim()
-          .toLowerCase();
-        const queryWords = rawClean
-          .split(/\s+/)
-          .filter((w) => (w.length >= 2 || /\d/.test(w)) && !["search", "for", "the", "and", "add", "cart", "product"].includes(w));
-
-        const searchCards = Array.from(
-          document.querySelectorAll<HTMLElement>(
-            "[data-component-type='s-search-result'], .s-result-item[data-asin]:not([data-asin='']), .product-card"
-          )
-        );
-
-        if (searchCards.length > 0) {
-          let bestCard: HTMLElement | null = null;
-          let bestScore = 0; // Require at least 1 positive keyword match!
-
-          for (const card of searchCards) {
-            const titleEl = card.querySelector<HTMLElement>("h2 a, .s-title-instructions-style a, a.a-link-normal.s-underline-text");
-            if (!titleEl) continue;
-            const titleText = (titleEl.innerText || titleEl.textContent || "").toLowerCase();
-
-            // Strict exclusion: never pick an accessory when looking for a primary computing/phone device
-            const isAccessory = titleText.includes("stand") || titleText.includes("case") || titleText.includes("sleeve") || 
-                                titleText.includes("skin") || titleText.includes("adapter") || titleText.includes("cover") || 
-                                titleText.includes("protector") || titleText.includes("cable") || titleText.includes("hub");
-
-            if (isAccessory && queryWords.some((w) => ["macbook", "laptop", "iphone", "ipad"].includes(w))) {
-              continue;
-            }
-
-            let score = 0;
-            for (const w of queryWords) {
-              if (titleText.includes(w)) {
-                score += (w === "macbook" || w === "laptop" || w === "apple" || w === "acer" || w === "aspire" ? 5 : 2);
-              }
-            }
-
-            if (score > bestScore) {
-              bestScore = score;
-              bestCard = titleEl;
-            }
-          }
-
-          if (bestCard && bestScore >= 2) {
-            targetEl = bestCard;
-          }
-        }
+          .trim();
+        const verifiedFinderRes = await findAndAddVerifiedProduct(rawClean || action.value || "", false);
+        return verifiedFinderRes;
       } else if (
         term.startsWith("play") ||
         term.startsWith("watch") ||

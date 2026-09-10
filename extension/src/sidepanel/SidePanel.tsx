@@ -1206,104 +1206,120 @@ export function SidePanel() {
         }
 
         // 4B. COMPLETE REAL-WORLD E-COMMERCE PIPELINE: 
-        // SCAN SEARCH RESULTS -> SCROLL UNTIL DESIRED PRODUCT FOUND -> OPEN PRODUCT -> SCROLL TO BUY BOX -> CLICK ADD TO CART
-        // Only run for compound multi-step search discovery (e.g. "search macbook and add to cart")
+        // 1. INSPECT FIRST VIEW FOR ACTUAL PRODUCT
+        // 2. IF NOT IN FIRST VIEW, SCROLL DOWN VIEWPORT AND SCAN
+        // 3. ADD THAT VERIFIED PRODUCT TO CART
+        // 4. STOP IMMEDIATELY (NO UNNECESSARY SCROLLS OR ACTIONS AFTERWARDS)
         const isSearchAndAddFlow =
-          rawGoal !== subGoal &&
-          /\b(?:search|find|look\s*for)\b/i.test(rawGoal) &&
-          /\b(?:add\s*(?:it\s*)?to\s*cart|add\s*cart)\b/i.test(subGoal);
+          (rawGoal !== subGoal &&
+            /\b(?:search|find|look\s*for)\b/i.test(rawGoal) &&
+            /\b(?:add\s*(?:it\s*)?to\s*cart|add\s*cart)\b/i.test(subGoal)) ||
+          /\b(?:add\s*(?:the\s*)?.+?\s*to\s*cart|buy\s+.+)\b/i.test(subGoal);
 
         if (isSearchAndAddFlow) {
-          updateStatus("E-Commerce Flow: Scanning search results for matching product card...");
-          await new Promise((r) => setTimeout(r, 2000)); // allow search results to render
+          // Extract the core product query from rawGoal or subGoal (e.g. "macbook m4")
+          let productQuery = rawGoal
+            .replace(/^(?:please\s+)?(?:search(?:\s+for)?|find|look\s*for|buy|order|get)\s+/i, "")
+            .replace(/\s+(?:in|on|at)\s+[a-z0-9.-]+$/i, "")
+            .replace(/\s+and\s+add\s+to\s+cart.*$/i, "")
+            .replace(/\badd\s+(?:it\s*)?to\s*cart\b/i, "")
+            .replace(/\bto\s*cart\b/i, "")
+            .trim();
+          if (!productQuery || productQuery.length < 2) {
+            productQuery = subGoal.replace(/^(?:add|buy|order)\s+/i, "").replace(/\s+to\s+cart.*$/i, "").trim();
+          }
 
-          // Step 1: Iterative search-and-scroll discovery loop (up to 3 scroll attempts if not immediately visible)
-          let productFound = false;
-          const openProductAction: AgentAction = {
-            action: "click",
-            targetText: `open product: ${rawGoal}`,
-            thought: `E-Commerce Pipeline: Matching verified product for '${rawGoal}'`
+          updateStatus(`E-Commerce Flow: Checking search results for "${productQuery}"...`);
+          await new Promise((r) => setTimeout(r, 2200)); // allow search results to render
+
+          // Step 1: Check FIRST VIEW (initial viewport) for the genuine matching product
+          updateStatus(`Step 1/2: Inspecting first view for actual product "${productQuery}"...`);
+          const firstViewAction: AgentAction = {
+            action: "find_and_add_product",
+            value: productQuery,
+            amount: 1, // 1 = checkFirstViewOnly
+            thought: `Inspecting first view for verified product '${productQuery}'`
           };
+          const firstViewRes = await executeActionInTab(firstViewAction);
 
-          for (let scrollAttempt = 0; scrollAttempt < 3; scrollAttempt++) {
-            updateStatus(`Scanning search results (Attempt ${scrollAttempt + 1}/3)...`);
-            const checkRes = await executeActionInTab(openProductAction);
-            if (checkRes.success) {
-              productFound = true;
-              setSteps((prev) => [
-                ...prev,
-                {
-                  stepIndex: prev.length + 1,
-                  timestamp: Date.now(),
-                  goal: "Open Desired Product",
-                  action: openProductAction,
-                  status: "completed",
-                  result: checkRes.result || "Found and opened matching product page"
-                }
-              ]);
+          if (firstViewRes.success && firstViewRes.productFound) {
+            updateStatus(`Found actual product in first view: "${firstViewRes.productTitle}". Added to cart!`);
+            setSteps((prev) => [
+              ...prev,
+              {
+                stepIndex: prev.length + 1,
+                timestamp: Date.now(),
+                goal: subGoal,
+                action: firstViewAction,
+                status: "completed",
+                result: firstViewRes.result || `Added "${firstViewRes.productTitle}" to cart directly from first view.`
+              }
+            ]);
+            // STOP UNNECESSARY THINGS: Clean finish!
+            isRunningRef.current = false;
+            setIsRunning(false);
+            updateStatus(`Completed: Verified "${firstViewRes.productTitle}" added to cart!`);
+            return;
+          }
+
+          // Step 2: NOT in first view -> SCROLL DOWN TO DISCOVER
+          updateStatus(`"${productQuery}" not in first view. Scrolling down to discover actual product...`);
+          let foundAfterScroll = false;
+          let finalScrollRes: any = null;
+
+          for (let scrollAttempt = 1; scrollAttempt <= 3; scrollAttempt++) {
+            if (!isRunningRef.current) break;
+            updateStatus(`Scrolling search results down (Pass ${scrollAttempt}/3)...`);
+            await executeActionInTab({
+              action: "scroll",
+              direction: "down",
+              amount: 650,
+              thought: `Scrolling down to inspect more products for '${productQuery}'`
+            });
+            await new Promise((r) => setTimeout(r, 1200));
+
+            updateStatus(`Scanning newly scrolled results for actual "${productQuery}"...`);
+            const scrollScanAction: AgentAction = {
+              action: "find_and_add_product",
+              value: productQuery,
+              amount: 0, // 0 = scan active viewport
+              thought: `Inspecting scrolled products for '${productQuery}'`
+            };
+            const scrollRes = await executeActionInTab(scrollScanAction);
+            if (scrollRes.success && scrollRes.productFound) {
+              foundAfterScroll = true;
+              finalScrollRes = scrollRes;
               break;
             }
-
-            // Not found in top fold -> scroll down to load more cards
-            updateStatus("Desired product not in current view, scrolling down search results...");
-            await executeActionInTab({
-              action: "scroll",
-              direction: "down",
-              amount: 550,
-              thought: "Scrolling search results to reveal matching products"
-            });
-            await new Promise((r) => setTimeout(r, 1200));
           }
 
-          if (!productFound) {
-            updateStatus("Could not verify matching product on current page. Scrolling to explore further...");
-            await executeActionInTab({
-              action: "scroll",
-              direction: "down",
-              amount: 600,
-              thought: "Searching lower folds for genuine product"
-            });
-            await new Promise((r) => setTimeout(r, 1200));
-            continue; // DO NOT add random items to cart if desired product was not found!
+          if (foundAfterScroll && finalScrollRes) {
+            updateStatus(`Found actual product after scroll: "${finalScrollRes.productTitle}". Added to cart!`);
+            setSteps((prev) => [
+              ...prev,
+              {
+                stepIndex: prev.length + 1,
+                timestamp: Date.now(),
+                goal: subGoal,
+                action: {
+                  action: "find_and_add_product",
+                  value: productQuery,
+                  thought: `Verified product '${finalScrollRes.productTitle}' found after scroll`
+                },
+                status: "completed",
+                result: finalScrollRes.result || `Found and added "${finalScrollRes.productTitle}" to cart after scrolling.`
+              }
+            ]);
+            updateStatus(`Completed: Verified "${finalScrollRes.productTitle}" added to cart!`);
+          } else {
+            updateStatus(`Could not locate verified "${productQuery}" in search results.`);
+            setError(`Could not locate verified "${productQuery}" in search results.`);
           }
 
-          // Step 2: Allow product page to fully load
-          updateStatus("Loading product specifications page...");
-          await new Promise((r) => setTimeout(r, 3200));
-
-          // Step 3: Scroll smoothly down to reveal options (color, storage, buy box)
-          updateStatus("Scrolling to inspect product specifications & buy box...");
-          await executeActionInTab({
-            action: "scroll",
-            direction: "down",
-            amount: 650,
-            thought: "Scrolling product view to bring Add to Cart button into active viewport"
-          });
-          await new Promise((r) => setTimeout(r, 1400));
-
-
-          // Step 4: Locate and Click the genuine 'Add to Cart' button directly
-          updateStatus("Locating and clicking 'Add to Cart'...");
-          const addToCartAction: AgentAction = {
-            action: "click",
-            targetText: "add to cart",
-            thought: "E-Commerce Pipeline: Clicking verified Add to Cart CTA directly"
-          };
-          const res = await executeActionInTab(addToCartAction);
-          setSteps((prev) => [
-            ...prev,
-            {
-              stepIndex: prev.length + 1,
-              timestamp: Date.now(),
-              goal: subGoal,
-              action: addToCartAction,
-              status: res.success ? "completed" : "failed",
-              result: res.result || "Clicked Add to Cart successfully"
-            }
-          ]);
-          await new Promise((r) => setTimeout(r, 1500));
-          await observeAndProtect().catch(() => {});
-          continue;
+          // STOP UNNECESSARY THINGS: Clean finish!
+          isRunningRef.current = false;
+          setIsRunning(false);
+          return;
         }
 
 
