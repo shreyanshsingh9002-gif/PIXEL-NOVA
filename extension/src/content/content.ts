@@ -331,48 +331,6 @@ function findTargetElementSmart(rawTerm: string): HTMLElement | null {
     if (cartEl) return cartEl;
   }
 
-  // Dedicated Video / YouTube Ad Skip Button Resolver
-  if (/\b(?:skip(?:\s+ad)?|skip\s+intro|skip\s+now)\b/i.test(lower)) {
-    const skipSelectors = [
-      ".ytp-skip-ad-button",
-      ".ytp-ad-skip-button-modern",
-      ".ytp-ad-skip-button",
-      ".ytp-ad-skip-button-container button",
-      ".ytp-ad-skip-button-container",
-      "button.ytp-ad-skip-button-modern",
-      "button[class*='skip' i]",
-      "[id*='skip-button' i] button",
-      "[id*='skip-button' i]",
-      ".videoAdUiSkipButton",
-      "[aria-label*='skip' i]",
-      "button.skip",
-      ".skip-button"
-    ];
-    for (const sel of skipSelectors) {
-      const candidates = Array.from(document.querySelectorAll<HTMLElement>(sel));
-      for (const btn of candidates) {
-        if (btn && btn.getClientRects().length > 0) {
-          // If the container was matched, prefer any button inside it
-          const innerBtn = btn.querySelector<HTMLElement>("button");
-          return innerBtn && innerBtn.getClientRects().length > 0 ? innerBtn : btn;
-        }
-      }
-    }
-
-    // Fallback search across all buttons in ytp-ad containers
-    const ytpButtons = Array.from(
-      document.querySelectorAll<HTMLElement>(
-        ".ytp-ad-module button, .ytp-ad-player-overlay button, [class*='ytp-ad' i] button"
-      )
-    );
-    for (const b of ytpButtons) {
-      const bText = (b.innerText || b.textContent || b.getAttribute("aria-label") || "").toLowerCase();
-      if (bText.includes("skip") && b.getClientRects().length > 0) {
-        return b;
-      }
-    }
-  }
-
   // Clean the search term
   let cleanTerm = rawTerm
     .trim()
@@ -1876,23 +1834,20 @@ async function executeAgentAction(
         term.startsWith("watch") ||
         term.startsWith("listen") ||
         term.startsWith("stream") ||
-        (/\b(?:play|watch|listen|stream)\b/i.test(term) && (window.location.hostname.includes("spotify.com") || window.location.hostname.includes("youtube.com")))
+        window.location.hostname.includes("spotify.com") ||
+        window.location.hostname.includes("youtube.com")
       ) {
-        // Exclude UI controls like skip, like, subscribe, mute, fullscreen
-        const isPlaybackMediaIntent = !/\b(?:skip|like|subscribe|share|comment|pause|stop|mute|fullscreen|volume)\b/i.test(term);
-        if (isPlaybackMediaIntent) {
-          const rawSongOrVideoQuery = term
-            .replace(/^(?:please\s+)?(?:play|watch|listen(?:\s+to)?|stream|open|click)\s+/i, "")
-            .replace(/^(?:the\s+)?(?:song|track|video|music)\s+/i, "")
-            .replace(/^["']|["']$/g, "")
-            .trim()
-            .toLowerCase();
+        const rawSongOrVideoQuery = term
+          .replace(/^(?:please\s+)?(?:play|watch|listen(?:\s+to)?|stream|open|click)\s+/i, "")
+          .replace(/^(?:the\s+)?(?:song|track|video|music)\s+/i, "")
+          .replace(/^["']|["']$/g, "")
+          .trim()
+          .toLowerCase();
 
-          const query = rawSongOrVideoQuery || action.value || "";
-          const mediaRes = await findAndPlayVerifiedMedia(query, false);
-          if (mediaRes.success && mediaRes.mediaFound) {
-            return mediaRes;
-          }
+        const query = rawSongOrVideoQuery || action.value || "";
+        const mediaRes = await findAndPlayVerifiedMedia(query, false);
+        if (mediaRes.success && mediaRes.mediaFound) {
+          return mediaRes;
         }
 
         // 3. Generic Audio / Video or Media Player fallback (only if already on media page or explicit play CTA)
@@ -2101,10 +2056,6 @@ async function executeAgentAction(
       }
       setTimeout(clearHighlightOverlay, 900);
 
-      // Remove visual overlay immediately BEFORE click so it never occludes hardware/CDP clicks
-      const existingOverlay = document.getElementById("pixel-nova-hud-overlay");
-      if (existingOverlay) existingOverlay.remove();
-
       targetEl.focus();
 
       const elRect = targetEl.getBoundingClientRect();
@@ -2112,94 +2063,25 @@ async function executeAgentAction(
       const clientY = Math.round(elRect.top + (elRect.height > 0 ? elRect.height / 2 : 10));
 
       // 1. Primary: Genuine Hardware Click via Chrome DevTools Protocol (isTrusted: true)
+      let hardwareClicked = false;
       try {
-        await new Promise((resolve) => {
+        const cdpRes: any = await new Promise((resolve) => {
           chrome.runtime.sendMessage(
             { action: "DISPATCH_REAL_CLICK", x: clientX, y: clientY },
             (response) => resolve(response || { success: false })
           );
         });
+        if (cdpRes?.success) hardwareClicked = true;
       } catch (e) {}
 
-      // 2. Full pointer & mouse event sequence on target element
-      const pointerInit: PointerEventInit = { bubbles: true, cancelable: true, composed: true, view: window, clientX, clientY, button: 0, buttons: 1, pointerId: 1, pointerType: "mouse", isPrimary: true };
-      const mouseInit: MouseEventInit = { bubbles: true, cancelable: true, composed: true, view: window, clientX, clientY, button: 0, buttons: 1 };
-      
-      targetEl.dispatchEvent(new PointerEvent("pointerdown", pointerInit));
-      targetEl.dispatchEvent(new MouseEvent("mousedown", mouseInit));
-      targetEl.dispatchEvent(new PointerEvent("pointerup", { ...pointerInit, buttons: 0 }));
-      targetEl.dispatchEvent(new MouseEvent("mouseup", { ...mouseInit, buttons: 0 }));
-      targetEl.dispatchEvent(new MouseEvent("click", { ...mouseInit, buttons: 0 }));
-      try { targetEl.click(); } catch (e) {}
-
-      // 3. YouTube Ad Skip - PERMANENT NATIVE ENGINE BYPASS
-      const isSkipAction = (action.targetText && /\bskip\b/i.test(action.targetText)) || targetEl.matches("[class*='skip' i], [id*='skip' i]");
-      if (isSkipAction) {
-        // Method 1: Execute YouTube's internal player.skipAd() API directly in the page's MAIN context
-        try {
-          const script = document.createElement("script");
-          script.textContent = `
-            (function() {
-              try {
-                const player = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
-                if (player) {
-                  if (typeof player.skipAd === 'function') player.skipAd();
-                  if (typeof player.stopVideo === 'function' && document.querySelector('.ad-showing')) {
-                    // Force ad video to complete
-                    const adVid = player.querySelector('video');
-                    if (adVid && isFinite(adVid.duration)) adVid.currentTime = adVid.duration;
-                  }
-                }
-              } catch(e) {}
-              // Click any skip buttons in DOM
-              document.querySelectorAll('.ytp-skip-ad-button, .ytp-ad-skip-button-modern, .ytp-ad-skip-button, .ytp-ad-skip-button-container button, [id*="skip-button" i] button, .videoAdUiSkipButton').forEach(function(el) {
-                try { el.click(); } catch(e) {}
-                try { if (el.parentElement) el.parentElement.click(); } catch(e) {}
-              });
-            })();
-          `;
-          (document.head || document.documentElement).appendChild(script);
-          script.remove();
-        } catch (scriptErr) {}
-
-        // Method 2: DOM-level click on all skip candidates
-        const allSkipElements = Array.from(document.querySelectorAll<HTMLElement>(
-          ".ytp-skip-ad-button, .ytp-ad-skip-button-modern, .ytp-ad-skip-button, .ytp-ad-skip-button-container, .ytp-ad-skip-button-container button, [id*='skip-button' i] button, [id*='skip-button' i], button.skip, [aria-label*='skip' i]"
-        ));
-        for (const el of allSkipElements) {
-          try {
-            el.dispatchEvent(new PointerEvent("pointerdown", pointerInit));
-            el.dispatchEvent(new MouseEvent("mousedown", mouseInit));
-            el.dispatchEvent(new PointerEvent("pointerup", { ...pointerInit, buttons: 0 }));
-            el.dispatchEvent(new MouseEvent("mouseup", { ...mouseInit, buttons: 0 }));
-            el.dispatchEvent(new MouseEvent("click", { ...mouseInit, buttons: 0 }));
-            el.click?.();
-            if (el.parentElement) el.parentElement.click();
-          } catch (err) {}
-        }
-
-        // Method 3: Fast-forward any HTML5 ad video element
-        try {
-          const videos = Array.from(document.querySelectorAll<HTMLVideoElement>("video"));
-          for (const vid of videos) {
-            const isAd = vid.closest(".ad-showing, .ytp-ad-player-overlay, .ytp-ad-module, .video-ads") ||
-                         document.querySelector(".ad-showing, .ytp-ad-player-overlay, .ytp-ad-module, .video-ads, [class*='ad-showing']");
-            if (isAd && isFinite(vid.duration) && vid.duration > 0) {
-              vid.currentTime = vid.duration;
-              vid.dispatchEvent(new Event("ended"));
-            }
-          }
-        } catch (vidErr) {}
+      if (!hardwareClicked) {
+        targetEl.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, view: window }));
+        targetEl.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window, buttons: 1 }));
+        targetEl.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true, view: window }));
+        targetEl.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
+        targetEl.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
       }
-
-      // 4. Click all inner clickable children (spans, divs, icons)
-      const innerElements = targetEl.querySelectorAll<HTMLElement>("button, span, div, svg");
-      for (const child of innerElements) {
-        try {
-          child.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
-          child.click?.();
-        } catch (e) {}
-      }
+      targetEl.click();
 
       // Spotify track rows start playback upon double-click
       if (window.location.hostname.includes("spotify.com")) {
