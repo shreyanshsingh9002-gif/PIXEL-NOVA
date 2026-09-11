@@ -51,7 +51,8 @@ import {
   PlusIcon,
   RotateCcwIcon,
   SlidersIcon,
-  StarIcon
+  StarIcon,
+  RadioIcon
 } from "./icons";
 
 const BACKEND_URL = "http://127.0.0.1:8000";
@@ -750,6 +751,8 @@ export function SidePanel() {
   const [isListening, setIsListening] = useState(false);
   const [voiceNarration, setVoiceNarration] = useState(false);
   const [showAuditModal, setShowAuditModal] = useState(false);
+  const [wakeWordEnabled, setWakeWordEnabled] = useState(false);
+  const [wakeWordListening, setWakeWordListening] = useState(false);
 
   // Vault Profile
   const [vault, setVault] = useState<UserVaultProfile>(DEFAULT_VAULT);
@@ -783,6 +786,44 @@ export function SidePanel() {
   const shortcutsRef = useRef(shortcuts);
   const isExecutingVoiceRef = useRef(false);
 
+  const wakeWordRecRef = useRef<any>(null);
+  const wakeWordEnabledRef = useRef(wakeWordEnabled);
+  const isWakeWordCapturingRef = useRef(false);
+
+  useEffect(() => {
+    wakeWordEnabledRef.current = wakeWordEnabled;
+    if (wakeWordEnabled && !isRunning && !isListening && !isWakeWordCapturingRef.current) {
+      startWakeWordEngine();
+    } else if (!wakeWordEnabled) {
+      stopWakeWordEngine();
+    }
+  }, [wakeWordEnabled]);
+
+  useEffect(() => {
+    isRunningRef.current = isRunning;
+    if (isRunning) {
+      stopWakeWordEngine();
+    } else if (wakeWordEnabledRef.current && !isListening && !isWakeWordCapturingRef.current) {
+      setTimeout(() => {
+        if (wakeWordEnabledRef.current && !isRunningRef.current && !isListening && !isWakeWordCapturingRef.current) {
+          startWakeWordEngine();
+        }
+      }, 500);
+    }
+  }, [isRunning]);
+
+  useEffect(() => {
+    if (isListening) {
+      stopWakeWordEngine();
+    } else if (wakeWordEnabledRef.current && !isRunningRef.current && !isWakeWordCapturingRef.current) {
+      setTimeout(() => {
+        if (wakeWordEnabledRef.current && !isRunningRef.current && !isListening && !isWakeWordCapturingRef.current) {
+          startWakeWordEngine();
+        }
+      }, 500);
+    }
+  }, [isListening]);
+
   useEffect(() => {
     goalRef.current = goal;
   }, [goal]);
@@ -799,18 +840,26 @@ export function SidePanel() {
           speechRecRef.current.abort();
         } catch (e) {}
       }
+      if (wakeWordRecRef.current) {
+        try {
+          wakeWordRecRef.current.abort();
+        } catch (e) {}
+      }
     };
   }, []);
 
-  // Load vault and custom shortcuts from chrome.storage.local
+  // Load vault, custom shortcuts and wakeWordEnabled from chrome.storage.local
   useEffect(() => {
     if (typeof chrome !== "undefined" && chrome.storage?.local) {
-      chrome.storage.local.get(["pixelNovaVault", "pixelNovaShortcuts"], (res) => {
+      chrome.storage.local.get(["pixelNovaVault", "pixelNovaShortcuts", "pixelNovaWakeWord"], (res) => {
         if (res?.pixelNovaVault) {
           setVault(res.pixelNovaVault as UserVaultProfile);
         }
         if (res?.pixelNovaShortcuts && Array.isArray(res.pixelNovaShortcuts) && res.pixelNovaShortcuts.length > 0) {
           setShortcuts(res.pixelNovaShortcuts);
+        }
+        if (typeof res?.pixelNovaWakeWord === "boolean") {
+          setWakeWordEnabled(res.pixelNovaWakeWord);
         }
       });
     }
@@ -998,7 +1047,10 @@ export function SidePanel() {
     stopInlineVoice();
 
     const spoken = spokenText.trim();
-    if (!spoken) return;
+    if (!spoken) {
+      isExecutingVoiceRef.current = false;
+      return;
+    }
 
     const matchedMacro = resolveShortcutKeyword(spoken, shortcutsRef.current);
     if (matchedMacro) {
@@ -1011,9 +1063,14 @@ export function SidePanel() {
       setGoal(spoken);
       runAutonomousLoop(spoken);
     }
+
+    setTimeout(() => {
+      isExecutingVoiceRef.current = false;
+    }, 1500);
   }
 
   async function startInlineVoice() {
+    stopWakeWordEngine();
     const SpeechRec = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
     if (!SpeechRec) {
       setError("Speech recognition is not supported in this browser.");
@@ -1111,6 +1168,144 @@ export function SidePanel() {
       stopInlineVoice();
     } else {
       startInlineVoice();
+    }
+  }
+
+  function stopWakeWordEngine() {
+    if (wakeWordRecRef.current) {
+      try {
+        wakeWordRecRef.current.onend = null;
+        wakeWordRecRef.current.abort();
+      } catch (e) {}
+      wakeWordRecRef.current = null;
+    }
+    setWakeWordListening(false);
+  }
+
+  function startWakeWordEngine() {
+    const SpeechRec = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
+    if (!SpeechRec || !wakeWordEnabledRef.current) return;
+
+    // Do not conflict if user is manually dictating or agent is currently executing a pipeline
+    if (isListening || isRunningRef.current || isWakeWordCapturingRef.current) {
+      return;
+    }
+
+    if (wakeWordRecRef.current) {
+      try {
+        wakeWordRecRef.current.onend = null;
+        wakeWordRecRef.current.abort();
+      } catch (e) {}
+      wakeWordRecRef.current = null;
+    }
+
+    try {
+      const rec = new SpeechRec();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = navigator.language || "en-US";
+
+      rec.onstart = () => {
+        setWakeWordListening(true);
+      };
+
+      rec.onresult = (event: any) => {
+        if (!wakeWordEnabledRef.current || isRunningRef.current || isWakeWordCapturingRef.current) return;
+
+        let transcript = "";
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          transcript += event.results[i][0].transcript + " ";
+        }
+        transcript = transcript.trim();
+
+        // Check for wake word trigger: "Hey Nova", "Ok Nova", "Hi Nova", or standalone "Nova"
+        const wakeWordRegex = /\b(?:hey|ok|hi|hello)?\s*nova\b/i;
+        if (wakeWordRegex.test(transcript)) {
+          // Wake word detected! Extract any immediate payload following the wake word
+          const match = transcript.match(/\b(?:hey|ok|hi|hello)?\s*nova(?:\s*[,:]\s*|\s+)(.*)$/i);
+          const trailingCommand = match && match[1] ? match[1].trim() : "";
+
+          // Mark as capturing to avoid recursive wake triggers
+          isWakeWordCapturingRef.current = true;
+          stopWakeWordEngine();
+
+          if (trailingCommand && trailingCommand.length >= 2) {
+            // User spoke compound: e.g. "Hey Nova, play tum hi ho on spotify"
+            updateStatus(`👂 "Hey Nova" detected! Capturing: "${trailingCommand}"`);
+            setGoal(trailingCommand);
+            goalRef.current = trailingCommand;
+            speakNarration("Hey Nova ready");
+
+            // Allow 1.1s for user to finish last words, then execute
+            setTimeout(() => {
+              isWakeWordCapturingRef.current = false;
+              executeCapturedVoice(goalRef.current || trailingCommand);
+            }, 1100);
+          } else {
+            // User just said "Hey Nova" -> immediately launch active inline voice capture!
+            updateStatus("👂 'Hey Nova' heard! Listening for your command...");
+            speakNarration("I'm listening");
+            setTimeout(() => {
+              isWakeWordCapturingRef.current = false;
+              startInlineVoice();
+            }, 300);
+          }
+        }
+      };
+
+      rec.onerror = (event: any) => {
+        if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+          setWakeWordEnabled(false);
+          wakeWordEnabledRef.current = false;
+          setWakeWordListening(false);
+        }
+      };
+
+      rec.onend = () => {
+        setWakeWordListening(false);
+        // Automatically restart standby if still enabled and not actively busy
+        if (wakeWordEnabledRef.current && !isRunningRef.current && !isListening && !isWakeWordCapturingRef.current) {
+          setTimeout(() => {
+            if (wakeWordEnabledRef.current && !isRunningRef.current && !isListening) {
+              startWakeWordEngine();
+            }
+          }, 400);
+        }
+      };
+
+      rec.start();
+      wakeWordRecRef.current = rec;
+      setWakeWordListening(true);
+    } catch (e) {
+      setWakeWordListening(false);
+    }
+  }
+
+  async function toggleWakeWord() {
+    const next = !wakeWordEnabled;
+    setWakeWordEnabled(next);
+    wakeWordEnabledRef.current = next;
+
+    if (typeof chrome !== "undefined" && chrome.storage?.local) {
+      chrome.storage.local.set({ pixelNovaWakeWord: next });
+    }
+
+    if (next) {
+      if (navigator.mediaDevices?.getUserMedia) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          stream.getTracks().forEach((t) => t.stop());
+        } catch (permErr: any) {
+          console.warn("Wake word mic permission check:", permErr);
+        }
+      }
+
+      updateStatus("👂 'Hey Nova' Wake Word activated! Say 'Hey Nova' anytime.");
+      speakNarration("Hey Nova wake word enabled");
+      startWakeWordEngine();
+    } else {
+      stopWakeWordEngine();
+      updateStatus("'Hey Nova' Wake Word disabled.");
     }
   }
 
@@ -2489,6 +2684,18 @@ export function SidePanel() {
             {voiceNarration ? <Volume2Icon size={13} className="text-emerald" /> : <VolumeXIcon size={13} />}
             <span>{voiceNarration ? "Guide Active" : "Audio Mute"}</span>
           </button>
+          <button
+            className={`wake-word-btn ${wakeWordEnabled ? "active" : ""} ${wakeWordListening ? "listening" : ""}`}
+            onClick={toggleWakeWord}
+            title={
+              wakeWordEnabled
+                ? (wakeWordListening ? "👂 'Hey Nova' listening on standby... Click to turn off" : "👂 'Hey Nova' enabled")
+                : "Enable 'Hey Nova' Hands-Free Wake Word"
+            }
+          >
+            <RadioIcon size={12} className={wakeWordEnabled ? (wakeWordListening ? "radar-pulse text-cyan" : "text-cyan") : "text-muted"} />
+            <span>{wakeWordEnabled ? "Hey Nova: ON" : "Hey Nova: OFF"}</span>
+          </button>
           <div className="shield-badge">
             <ShieldCheckIcon size={12} className="text-emerald" />
             <span>0 RAW PII SENT</span>
@@ -2595,9 +2802,15 @@ export function SidePanel() {
         <div className="input-group">
           <button
             type="button"
-            className={`btn-mic ${isListening ? "listening" : ""}`}
+            className={`btn-mic ${isListening ? "listening" : ""} ${wakeWordEnabled && wakeWordListening && !isListening ? "wake-standby" : ""}`}
             onClick={toggleVoiceInput}
-            title={isListening ? "Listening... Click to cancel" : "Hands-Free Voice Commander (Speech-to-Text)"}
+            title={
+              isListening
+                ? "Listening... Click to cancel"
+                : wakeWordEnabled && wakeWordListening
+                ? "Hands-Free 'Hey Nova' Active (Click for manual dictation)"
+                : "Hands-Free Voice Commander (Speech-to-Text)"
+            }
           >
             {isListening ? (
               <div className="soundwave-container">
@@ -2616,7 +2829,7 @@ export function SidePanel() {
               className="goal-input"
               value={goal}
               onChange={(e) => setGoal(e.target.value)}
-              placeholder="Speak or type your goal..."
+              placeholder={wakeWordEnabled ? "Say 'Hey Nova' or type your goal..." : "Speak or type your goal..."}
               disabled={isRunning}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !isRunning) runAutonomousLoop();
