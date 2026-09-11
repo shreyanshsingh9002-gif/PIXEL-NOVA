@@ -338,17 +338,37 @@ function findTargetElementSmart(rawTerm: string): HTMLElement | null {
       ".ytp-ad-skip-button-modern",
       ".ytp-ad-skip-button",
       ".ytp-ad-skip-button-container button",
+      ".ytp-ad-skip-button-container",
+      "button.ytp-ad-skip-button-modern",
       "button[class*='skip' i]",
       "[id*='skip-button' i] button",
+      "[id*='skip-button' i]",
       ".videoAdUiSkipButton",
       "[aria-label*='skip' i]",
       "button.skip",
       ".skip-button"
     ];
     for (const sel of skipSelectors) {
-      const btn = document.querySelector<HTMLElement>(sel);
-      if (btn && btn.getClientRects().length > 0) {
-        return btn;
+      const candidates = Array.from(document.querySelectorAll<HTMLElement>(sel));
+      for (const btn of candidates) {
+        if (btn && btn.getClientRects().length > 0) {
+          // If the container was matched, prefer any button inside it
+          const innerBtn = btn.querySelector<HTMLElement>("button");
+          return innerBtn && innerBtn.getClientRects().length > 0 ? innerBtn : btn;
+        }
+      }
+    }
+
+    // Fallback search across all buttons in ytp-ad containers
+    const ytpButtons = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        ".ytp-ad-module button, .ytp-ad-player-overlay button, [class*='ytp-ad' i] button"
+      )
+    );
+    for (const b of ytpButtons) {
+      const bText = (b.innerText || b.textContent || b.getAttribute("aria-label") || "").toLowerCase();
+      if (bText.includes("skip") && b.getClientRects().length > 0) {
+        return b;
       }
     }
   }
@@ -2099,14 +2119,44 @@ async function executeAgentAction(
         if (cdpRes?.success) hardwareClicked = true;
       } catch (e) {}
 
-      if (!hardwareClicked) {
-        targetEl.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, view: window }));
-        targetEl.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window, buttons: 1 }));
-        targetEl.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true, view: window }));
-        targetEl.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
-        targetEl.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+      // Always dispatch full pointer & mouse sequence (bypasses frameworks like Polymer/React that rely on specific mouse/pointer events)
+      targetEl.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, view: window }));
+      targetEl.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window, buttons: 1 }));
+      targetEl.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true, view: window }));
+      targetEl.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
+      targetEl.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+      try {
+        targetEl.click();
+      } catch (e) {}
+
+      // Click all inner clickable children (spans, divs, icons)
+      const innerElements = targetEl.querySelectorAll<HTMLElement>("button, span, div, svg");
+      for (const child of innerElements) {
+        try {
+          child.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+          child.click?.();
+        } catch (e) {}
       }
-      targetEl.click();
+
+      // If this is a YouTube skip button, also trigger parent container and ensure ad video is fast-forwarded
+      const isSkipAction = action.targetText && /\bskip\b/i.test(action.targetText);
+      if (isSkipAction || targetEl.matches("[class*='skip' i], [id*='skip' i]")) {
+        const skipParent = targetEl.closest<HTMLElement>(".ytp-ad-skip-button-container, .ytp-ad-skip-button-modern, [class*='skip' i]");
+        if (skipParent && skipParent !== targetEl) {
+          try {
+            skipParent.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+            skipParent.click?.();
+          } catch (e) {}
+        }
+        // Universal Ad Skip Guarantee: if video player has an ad playing, skip to end
+        try {
+          const video = document.querySelector<HTMLVideoElement>(".html5-video-player.ad-showing video, video.html5-main-video");
+          const adShowing = document.querySelector(".ad-showing, .ytp-ad-player-overlay, .ytp-ad-module");
+          if (video && adShowing && isFinite(video.duration) && video.duration > 0) {
+            video.currentTime = video.duration;
+          }
+        } catch (e) {}
+      }
 
       // Spotify track rows start playback upon double-click
       if (window.location.hostname.includes("spotify.com")) {
