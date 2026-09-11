@@ -102,20 +102,54 @@ function isElementVisible(el: HTMLElement): boolean {
   return true;
 }
 
-function getPageInformation(): PageInfo {
-  const title = document.title || "Untitled Page";
-  const url = window.location.href;
-  let text = (document.body?.innerText || "").trim();
+function extractVisibleViewportText(): string {
+  const vpWidth = window.innerWidth;
+  const vpHeight = window.innerHeight;
+  const textPieces: string[] = [];
 
-  // Active Dialog / Modal Priority: If an active modal/dialog is visible, prioritize its prompt text at the top of context
+  // If there's an active modal dialog, prioritize its prompt text first
   const activeModal = document.querySelector<HTMLElement>(
     'dialog[open], [role="dialog"]:not([style*="display: none"]):not([style*="visibility: hidden"]), [aria-modal="true"], .modal.show, .modal-dialog, .modal:not([style*="display: none"]):not([style*="visibility: hidden"]), [class*="modal" i]:not([style*="display: none"]):not([style*="visibility: hidden"]), [id*="modal" i]:not([style*="display: none"]):not([style*="visibility: hidden"])'
   );
   if (activeModal && isElementVisible(activeModal)) {
     const modalText = (activeModal.innerText || "").trim();
-    if (modalText.length >= 10 && !text.startsWith(modalText)) {
-      text = `${modalText}\n\n${text}`;
+    if (modalText) textPieces.push(modalText);
+  }
+
+  // Scan visible text containers exclusively within the current viewport
+  const allTextContainers = document.querySelectorAll<HTMLElement>(
+    "h1, h2, h3, h4, h5, h6, p, span, div, li, label, button, a, td, th, dt, dd, b, strong, i, em, code, pre, [class*='val' i], [id*='val' i], [class*='card' i], [id*='card' i], [class*='number' i], #glow-ingress-line1, #glow-ingress-line2, [id*='ingress' i], [class*='location' i]"
+  );
+
+  for (const el of allTextContainers) {
+    if (el.children.length > 2) continue; // Only process near-leaf nodes to avoid duplicate container text
+    // Exclude website footers and copyright containers (public company info, not user PII)
+    if (el.closest("footer, #navFooter, .navFooterLine, [role='contentinfo'], .footer, #footer, script, style, noscript")) continue;
+
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) continue;
+
+    // Viewport-only constraint: only extract text visible right now on screen!
+    if (rect.bottom > 0 && rect.top < vpHeight && rect.right > 0 && rect.left < vpWidth) {
+      if (!isElementVisible(el)) continue;
+      const t = (el.innerText || el.textContent || "").trim();
+      if (t && t.length >= 2 && !textPieces.some((existing) => existing === t)) {
+        textPieces.push(t);
+      }
     }
+  }
+
+  return textPieces.join("\n");
+}
+
+function getPageInformation(): PageInfo {
+  const title = document.title || "Untitled Page";
+  const url = window.location.href;
+
+  // Viewport-only text extraction: only scan what is actually visible on the user's screen!
+  let text = extractVisibleViewportText();
+  if (!text || text.length < 20) {
+    text = (document.body?.innerText || "").slice(0, 1500).trim();
   }
 
   const candidates = Array.from(
@@ -129,6 +163,8 @@ function getPageInformation(): PageInfo {
   );
   for (const el of allDivsAndSpans) {
     if (candidates.length >= 80) break;
+    // Exclude footer elements
+    if (el.closest("footer, #navFooter, .navFooterLine, [role='contentinfo'], .footer, #footer")) continue;
     if (el.children.length === 0 || (el.children.length === 1 && el.querySelector("svg, img"))) {
       const style = window.getComputedStyle(el);
       if (style.cursor === "pointer" && !candidates.includes(el)) {
@@ -141,6 +177,8 @@ function getPageInformation(): PageInfo {
   let idx = 0;
 
   for (const el of candidates) {
+    // Exclude elements in the footer
+    if (el.closest("footer, #navFooter, .navFooterLine, [role='contentinfo'], .footer, #footer")) continue;
     if (!isElementVisible(el)) continue;
 
     const rect = el.getBoundingClientRect();
@@ -349,8 +387,8 @@ function findTargetElementSmart(rawTerm: string): HTMLElement | null {
     if (el.offsetParent === null && !el.getClientRects().length) continue;
     const { text, aria, title, val } = getElSearchableStrings(el);
     if (
-      (text && (text.includes(cleanTerm) || cleanTerm.includes(text))) ||
-      (aria && (aria.includes(cleanTerm) || cleanTerm.includes(aria))) ||
+      (text && (text.includes(cleanTerm) || (text.length >= 4 && cleanTerm.split(/\s+/).includes(text)))) ||
+      (aria && (aria.includes(cleanTerm) || (aria.length >= 4 && cleanTerm.split(/\s+/).includes(aria)))) ||
       (title && title.includes(cleanTerm)) ||
       (val && val.includes(cleanTerm))
     ) {
@@ -592,11 +630,13 @@ function scoreProductCardCandidate(
     return { score: 0, isMatch: false, reason: "Filtered accessory (case/stand/cover)" };
   }
 
-  // 2. Strict Discriminator Matching (e.g. "m4" MUST be present if requested)
+  // 2. Discriminator Matching (e.g. "m4", "16", "pro")
+  // Check if query discriminators are present in title
+  let missingDiscriminator = false;
   for (const disc of queryInfo.discriminators) {
     const discReg = new RegExp(`\\b${disc}\\b`, "i");
     if (!discReg.test(t)) {
-      return { score: 0, isMatch: false, reason: `Missing mandatory model discriminator '${disc}'` };
+      missingDiscriminator = true;
     }
   }
 
@@ -619,11 +659,22 @@ function scoreProductCardCandidate(
   for (const w of queryInfo.words) {
     if (new RegExp(`\\b${w}\\b`, "i").test(t)) {
       matchedCount++;
-      score += queryInfo.discriminators.includes(w) ? 30 : 15;
+      score += queryInfo.discriminators.includes(w) ? 40 : 15;
     }
   }
 
-  if (queryInfo.words.length > 0 && matchedCount / queryInfo.words.length < 0.5) {
+  // If query had discriminators and title matched all of them, give significant boost
+  if (!missingDiscriminator && queryInfo.discriminators.length > 0) {
+    score += 30;
+  } else if (missingDiscriminator && queryInfo.discriminators.length > 0) {
+    // Adaptive matching for unreleased/future models (e.g. "iPhone 17 Pro"):
+    // Do NOT return score 0 if base keywords (e.g. "iphone" + "pro") match strongly!
+    score -= 15;
+  }
+
+  // Minimum keyword match threshold
+  const minMatches = Math.min(2, queryInfo.words.length);
+  if (matchedCount < minMatches) {
     return { score: 0, isMatch: false, reason: "Insufficient keyword match" };
   }
 
@@ -663,7 +714,16 @@ async function clickAddToCartOnProductPage(): Promise<{ success: boolean; produc
     ".btn-cart",
     "#buy-now-button",
     "button._2KpZ6l._2U9uOA._3v1-ww",
-    "button._2KpZ6l._2U9uOA.ihZ85k._3AWRsL"
+    "button._2KpZ6l._2U9uOA.ihZ85k._3AWRsL",
+    "button._2KpZ6l._2U9uOA._1qRWRL",
+    "button.QqFHMw",
+    "button.dSM5xD",
+    "button[class*='buy' i]",
+    "button[class*='cart' i]",
+    "button[class*='buyNow' i]",
+    "button[class*='addToCart' i]",
+    ".pdp-add-to-bag",
+    ".pdp-button"
   ];
 
   let cartBtn: HTMLElement | null = null;
@@ -691,10 +751,10 @@ async function clickAddToCartOnProductPage(): Promise<{ success: boolean; produc
     }
   }
 
-  // Pass 3: Button text fallback
+  // Pass 3: Button text fallback (supports 'Add to Cart', 'Buy Now', 'Add to Bag')
   if (!cartBtn) {
-    const buttons = Array.from(document.querySelectorAll<HTMLElement>("button, input[type='button'], input[type='submit'], a.a-button-text"));
-    cartBtn = buttons.find((b) => /\badd\s+to\s+(?:cart|bag|basket)\b/i.test(b.innerText || b.getAttribute("value") || "")) || null;
+    const buttons = Array.from(document.querySelectorAll<HTMLElement>("button, input[type='button'], input[type='submit'], a.a-button-text, [role='button']"));
+    cartBtn = buttons.find((b) => /\b(?:add\s+to\s+(?:cart|bag|basket)|buy\s+now)\b/i.test(b.innerText || b.getAttribute("value") || b.getAttribute("aria-label") || "")) || null;
   }
 
   if (!cartBtn) {
@@ -746,12 +806,36 @@ async function findAndAddVerifiedProduct(
   const queryInfo = parseProductQueryTokens(query);
   const cardElements = Array.from(
     document.querySelectorAll<HTMLElement>(
-      "[data-component-type='s-search-result'], .s-result-item[data-asin]:not([data-asin='']), div[data-id], div._1AtVbE, .product-card, .product-item"
+      "[data-component-type='s-search-result'], .s-result-item[data-asin]:not([data-asin='']), div[data-id], div.cPHDOP, div._75nlfW, div.tUxRFH, div.slAVV4, div._1sdMkc, div.DOjaWF, div._1AtVbE, .product-card, .product-item, li.product-base, a[href*='/p/']:not([class*='logo']), a[href*='itm']"
     )
   ).filter((el) => {
     // Avoid carousel / ad-banner widgets on Amazon
     return el.closest(".s-widget-container:has(.a-carousel), [data-component-type='s-ads-widget'], [data-component-type='sp-sponsored-carousel'], .ad-holder") === null;
   });
+
+  // Universal structural card fallback for any modern e-commerce site
+  if (cardElements.length === 0) {
+    const structuralCards = Array.from(document.querySelectorAll<HTMLElement>("div, article, li, a")).filter((el) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 120 || rect.height < 150 || rect.height > 1200) return false;
+      const text = el.innerText || "";
+      const hasPrice = /[₹$€£]\s*[\d,]+|\bRs\.?\s*[\d,]+/i.test(text);
+      if (!hasPrice) return false;
+      const hasImg = el.querySelector("img") !== null;
+      const hasLink = el.tagName.toLowerCase() === "a" || el.querySelector("a") !== null;
+      return hasImg && hasLink;
+    });
+    const deduped: HTMLElement[] = [];
+    for (const card of structuralCards) {
+      if (card.tagName.toLowerCase() === "body" || card.tagName.toLowerCase() === "main") continue;
+      if (!deduped.some((existing) => existing.contains(card))) {
+        deduped.push(card);
+      }
+    }
+    if (deduped.length > 0) {
+      cardElements.push(...deduped);
+    }
+  }
 
   if (cardElements.length === 0) {
     return {
@@ -775,9 +859,14 @@ async function findAndAddVerifiedProduct(
 
   for (const card of cardElements) {
     const titleEl = card.querySelector<HTMLElement>(
-      "h2 a, .s-title-instructions-style a, a.a-link-normal.s-underline-text, .KzDlHZ, a.wjcEIp, a.CG2Akx, .product-title a, h3 a"
-    );
-    const title = (titleEl?.textContent || card.querySelector("h2, h3")?.textContent || "")
+      "h2 a, .s-title-instructions-style a, a.a-link-normal.s-underline-text, .KzDlHZ, a.wjcEIp, a.CG2Akx, .DUMKcI, .product-title a, h3 a, [class*='title' i] a, a[title]"
+    ) || (card.tagName.toLowerCase() === "a" && card.getAttribute("title") ? card : null);
+    const title = (
+      titleEl?.getAttribute("title") ||
+      titleEl?.textContent ||
+      card.querySelector(".KzDlHZ, h2, h3, [class*='title' i]")?.textContent ||
+      ""
+    )
       .replace(/\s+/g, " ")
       .trim();
     if (!title || title.length < 5) continue;
@@ -845,8 +934,15 @@ async function findAndAddVerifiedProduct(
   }
 
   // Option 2: Navigate to product page directly in the SAME tab
-  const productHref = (best.titleEl as HTMLAnchorElement)?.href;
-  if (productHref) {
+  const linkAnchor = (
+    best.titleEl?.tagName.toLowerCase() === "a"
+      ? best.titleEl
+      : best.titleEl?.closest("a") ||
+        best.cardEl.querySelector<HTMLAnchorElement>("a[href*='/p/'], a[href*='itm'], a[href*='/dp/'], a[href]") ||
+        (best.cardEl.tagName.toLowerCase() === "a" ? best.cardEl : null)
+  ) as HTMLAnchorElement | null;
+  const productHref = linkAnchor?.href;
+  if (productHref && !productHref.startsWith("javascript:")) {
     window.location.href = productHref;
     return {
       success: true,
@@ -859,6 +955,10 @@ async function findAndAddVerifiedProduct(
   }
 
   if (best.titleEl) {
+    const anchor = best.titleEl.closest("a");
+    if (anchor && anchor.getAttribute("target") === "_blank") {
+      anchor.removeAttribute("target");
+    }
     best.titleEl.click();
     return {
       success: true,
@@ -876,9 +976,750 @@ async function findAndAddVerifiedProduct(
   };
 }
 
+interface MediaCandidateScore {
+  score: number;
+  isMatch: boolean;
+  matchedTokensCount: number;
+  totalTokensCount: number;
+  reason: string;
+}
+
+function scoreMediaCandidate(
+  title: string,
+  rawQuery: string,
+  isAdOrSponsored: boolean,
+  channelOrArtist: string = ""
+): MediaCandidateScore {
+  if (isAdOrSponsored) {
+    return { score: -100, isMatch: false, matchedTokensCount: 0, totalTokensCount: 0, reason: "Ad/sponsored video rejected" };
+  }
+
+  const cleanQuery = rawQuery
+    .toLowerCase()
+    .replace(/^(?:please\s+)?(?:play|watch|listen(?:\s+to)?|stream|open|search(?:\s+for)?)\s+/i, "")
+    .replace(/^(?:the\s+)?(?:song|track|video|music)\s+/i, "")
+    .replace(/\s+(?:in|on|at)\s+(?:youtube|spotify|google|web|browser|[a-z0-9.-]+)$/i, "")
+    .replace(/\b(?:by|from|singer|artist)\b/i, " ")
+    .replace(/\s+(?:and\s+)?(?:play\s+it|play|watch\s+it|watch|listen\s+to\s+it|listen|stream\s+it|stream)\s*$/i, "")
+    .replace(/\s+(?:the\s+)?(?:song|track|video|music)\s*$/i, "")
+    .replace(/^["']|["']$/g, "")
+    .replace(/[^\w\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const queryTokens = cleanQuery
+    .split(/\s+/)
+    .filter((w) => w.length >= 2 && !["the", "and", "for", "with", "a", "an", "to", "in", "on", "of", "it", "play", "watch", "song", "video"].includes(w));
+
+  if (queryTokens.length === 0) {
+    return { score: 0, isMatch: false, matchedTokensCount: 0, totalTokensCount: 0, reason: "Empty media query" };
+  }
+
+  const t = (title + " " + channelOrArtist).toLowerCase().replace(/[^\w\s]/g, " ").replace(/\s+/g, " ");
+
+  // 1. Phrase match (e.g. "perfect" or "tum hi ho")
+  const phraseMatch = t.includes(cleanQuery);
+
+  let matchedTokensCount = 0;
+  for (const token of queryTokens) {
+    if (new RegExp(`\\b${token}\\b`, "i").test(t) || t.includes(token)) {
+      matchedTokensCount++;
+    }
+  }
+
+  const matchRatio = matchedTokensCount / queryTokens.length;
+
+  // Strict validation: must match at least 50% of tokens, OR match all tokens for 1-2 word queries, OR exact phrase match!
+  const isMatch = phraseMatch || (queryTokens.length <= 2 ? matchedTokensCount === queryTokens.length : matchRatio >= 0.5);
+
+  if (!isMatch) {
+    return {
+      score: 0,
+      isMatch: false,
+      matchedTokensCount,
+      totalTokensCount: queryTokens.length,
+      reason: `Insufficient token match (${matchedTokensCount}/${queryTokens.length})`
+    };
+  }
+
+  let score = matchedTokensCount * 25;
+  if (phraseMatch) score += 50;
+  if (matchRatio === 1) score += 30;
+
+  return {
+    score,
+    isMatch: true,
+    matchedTokensCount,
+    totalTokensCount: queryTokens.length,
+    reason: `Verified media match (Score: ${score}, Ratio: ${(matchRatio * 100).toFixed(0)}%)`
+  };
+}
+
+async function findAndPlayVerifiedMedia(
+  rawQuery: string,
+  checkFirstViewOnly: boolean
+): Promise<{
+  success: boolean;
+  mediaFound: boolean;
+  mediaTitle?: string;
+  result?: string;
+  error?: string;
+}> {
+  const isYouTube = window.location.hostname.includes("youtube.com");
+  const isSpotify = window.location.hostname.includes("spotify.com");
+  const isGoogle = window.location.hostname.includes("google.");
+  const isAudioPlatform =
+    isSpotify ||
+    window.location.hostname.includes("soundcloud.com") ||
+    window.location.hostname.includes("jiosaavn.com") ||
+    window.location.hostname.includes("gaana.com") ||
+    window.location.hostname.includes("music.apple.com") ||
+    window.location.hostname.includes("music.amazon.") ||
+    window.location.hostname.includes("music.youtube.com");
+
+  // 1. If already on a YouTube watch page and video element is present
+  if (isYouTube && window.location.pathname.includes("/watch")) {
+    const videoEl = document.querySelector<HTMLVideoElement>("video");
+    const playBtn = document.querySelector<HTMLElement>("button.ytp-play-button");
+    if (videoEl) {
+      try {
+        videoEl.play();
+      } catch (e) {}
+      if (playBtn) playBtn.click();
+      return {
+        success: true,
+        mediaFound: true,
+        mediaTitle: document.title,
+        result: `Playing current video: "${document.title}"`
+      };
+    }
+  }
+
+  interface ScoredMediaCard {
+    cardEl: HTMLElement;
+    clickEl: HTMLElement;
+    title: string;
+    score: number;
+    isInFirstView: boolean;
+  }
+
+  const scoredCards: ScoredMediaCard[] = [];
+
+  // A. YouTube Search Results & Video Cards
+  if (isYouTube) {
+    // 1. Ensure DOM has settled with video cards (wait up to 2.5s if search results are mounting)
+    let cardElements: HTMLElement[] = [];
+    for (let attempt = 0; attempt < 8; attempt++) {
+      cardElements = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          "ytd-video-renderer, yt-lockup-view-model, ytd-lockup-view-model, ytd-rich-item-renderer:not([is-shorts]), ytd-compact-video-renderer, ytd-grid-video-renderer"
+        )
+      ).filter((el) => {
+        if (el.closest("ytd-reel-shelf-renderer, [is-shorts]")) return false;
+        return true;
+      });
+
+      if (cardElements.length > 0) break;
+
+      // Fallback: If YouTube uses arbitrary custom elements, group by distinct /watch?v= links
+      const watchLinks = Array.from(document.querySelectorAll<HTMLAnchorElement>("a[href*='/watch?v=']"));
+      if (watchLinks.length > 0) {
+        const seenVids = new Set<string>();
+        for (const a of watchLinks) {
+          const vMatch = a.href.match(/[?&]v=([a-zA-Z0-9_-]+)/);
+          const vId = vMatch ? vMatch[1] : a.href;
+          if (seenVids.has(vId)) continue;
+          seenVids.add(vId);
+          const container =
+            a.closest<HTMLElement>("ytd-video-renderer, ytd-rich-item-renderer, yt-lockup-view-model, [role='group'], #contents > div") ||
+            (a.parentElement as HTMLElement) ||
+            a;
+          cardElements.push(container);
+        }
+        if (cardElements.length > 0) break;
+      }
+
+      await new Promise((r) => setTimeout(r, 250));
+    }
+
+    for (const card of cardElements) {
+      // YouTube Ad Detection: Only reject if actually an ad slot or ad badge (NEVER quality/verified badges!)
+      const isAd =
+        card.closest("ytd-ad-slot-renderer, [is-promoted], ytd-in-feed-ad-layout-renderer") !== null ||
+        card.querySelector(".badge-style-type-ad, ytd-ad-slot-renderer, [aria-label='Ad' i], [aria-label='Sponsored' i]") !== null ||
+        Array.from(card.querySelectorAll(".badge-shape-wiz__text, ytd-badge-supported-renderer")).some((b) =>
+          /^(?:ad|sponsored)$/i.test((b.textContent || "").trim())
+        );
+
+      // Multi-layer resilient title extraction:
+      let title = "";
+      const titleEl =
+        card.querySelector<HTMLElement>(
+          "#video-title, a#video-title, yt-formatted-string#video-title, a#video-title-link, .yt-lockup-metadata-view-model-wiz__title, .yt-lockup-metadata-view-model-wiz__title a, h3.title-and-badge a, h3 a, [role='heading'] a, [role='heading']"
+        ) || card.querySelector<HTMLElement>("#title-wrapper h3, #meta h3, #details h3, h3");
+
+      if (titleEl) {
+        title = (
+          titleEl.getAttribute("title") ||
+          titleEl.textContent ||
+          titleEl.getAttribute("aria-label") ||
+          ""
+        ).replace(/\s+/g, " ").trim();
+      }
+
+      // If title is missing or only a timestamp (e.g. "3:45"), inspect watch links or thumbnail aria-label
+      if (!title || /^\d+:\d+(?::\d+)?$/.test(title) || title.length < 2) {
+        const watchLink = card.querySelector<HTMLAnchorElement>("a[href*='/watch?v=']:not(#thumbnail), a[href*='/watch']:not(#thumbnail)");
+        if (watchLink) {
+          title = (watchLink.getAttribute("title") || watchLink.getAttribute("aria-label") || watchLink.textContent || "").replace(/\s+/g, " ").trim();
+        }
+      }
+      if (!title || /^\d+:\d+(?::\d+)?$/.test(title) || title.length < 2) {
+        const thumbLink = card.querySelector<HTMLAnchorElement>("a#thumbnail[aria-label], a[href*='/watch'][aria-label]");
+        if (thumbLink) {
+          const rawAria = thumbLink.getAttribute("aria-label") || "";
+          const byIndex = rawAria.indexOf(" by ");
+          if (byIndex > 0) {
+            title = rawAria.slice(0, byIndex).trim();
+          } else if (rawAria) {
+            title = rawAria.trim();
+          }
+        }
+      }
+
+      if (!title || title.length < 2) continue;
+
+      const channelEl = card.querySelector<HTMLElement>("#channel-name, ytd-channel-name, #channel-info, .yt-lockup-byline, #text.ytd-channel-name");
+      const channel = (channelEl?.textContent || "").trim();
+
+      const rect = card.getBoundingClientRect();
+      const isInFirstView = rect.top < window.innerHeight && rect.bottom > 40 && rect.height > 20;
+
+      if (checkFirstViewOnly && !isInFirstView) {
+        continue;
+      }
+
+      const { isMatch, score } = scoreMediaCandidate(title, rawQuery, isAd, channel);
+      if (isMatch && score > 0) {
+        const anchorEl =
+          card.querySelector<HTMLElement>("a#video-title, a#video-title-link, .yt-lockup-metadata-view-model-wiz__title, a[href*='/watch?v='], a#thumbnail") ||
+          titleEl ||
+          card;
+        scoredCards.push({
+          cardEl: card,
+          clickEl: anchorEl,
+          title,
+          score: score + (isInFirstView ? 15 : 0),
+          isInFirstView
+        });
+      }
+    }
+  }
+
+  // B. Audio Platforms (Spotify, SoundCloud, JioSaavn, Gaana, Apple Music, YouTube Music, etc.)
+  if (isAudioPlatform || isSpotify) {
+    // 1. If on Spotify and search input exists but doesn't reflect query, trigger Spotify search store
+    if (isSpotify) {
+      try {
+        const searchInput = document.querySelector<HTMLInputElement>(
+          "input[data-testid='search-input'], input[role='searchbox'], input[type='search']"
+        );
+        if (searchInput && (!searchInput.value || !searchInput.value.toLowerCase().includes(rawQuery.toLowerCase().trim()))) {
+          searchInput.focus();
+          searchInput.value = rawQuery.trim();
+          searchInput.dispatchEvent(new Event("input", { bubbles: true }));
+          searchInput.dispatchEvent(new Event("change", { bubbles: true }));
+          searchInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true }));
+          await new Promise((r) => setTimeout(r, 600));
+        }
+      } catch (e) {}
+    }
+
+    // 2. Wait for SPA search results to mount into the DOM (up to 3s)
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const hasCards = document.querySelector(
+        "[data-testid='top-result-card'], [data-testid='heropod-card'], section[data-testid='top-result-card'], [data-testid='tracklist-row'], div[role='row'], button[data-testid='play-button'], button[aria-label*='Play' i], .soundList__item, .trackItem, .track-item, ytmusic-responsive-list-item-renderer, .o-song, article[data-testid]"
+      );
+      if (hasCards) break;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+
+    // Helper: Spotify Top Card Title Extractor (Excludes static UI badges like "Top result", "Song", etc.)
+    const extractSpotifyTopCardTitle = (card: HTMLElement): string => {
+      const explicitEl = card.querySelector<HTMLElement>(
+        "a[data-testid='top-result-card-title'], [data-testid='top-result-card-title'], a[href*='/track/'], a[href*='/album/'], a[href*='/episode/'], a[href*='/artist/'], a[title], [data-testid='entityTitle']"
+      );
+      if (explicitEl) {
+        const t = (explicitEl.getAttribute("title") || explicitEl.textContent || "").replace(/\s+/g, " ").trim();
+        if (t) return t;
+      }
+
+      const ignored = new Set(["top result", "song", "songs", "artist", "artists", "album", "albums", "playlist", "playlists", "episode", "episodes", "podcast", "podcasts", "verified"]);
+      const candidates = Array.from(card.querySelectorAll<HTMLElement>("a, h3, h2, div[dir='auto'], span[dir='auto'], [data-encore-id='text']"));
+      for (const el of candidates) {
+        const text = (el.getAttribute("title") || el.textContent || "").replace(/\s+/g, " ").trim();
+        if (text && !ignored.has(text.toLowerCase()) && text.length >= 2) {
+          return text;
+        }
+      }
+
+      return (card.textContent || "").replace(/\s+/g, " ").trim();
+    };
+
+    // Helper: Spotify Track Row Title Extractor (Excludes column 1 track index e.g. "1")
+    const extractSpotifyTrackRowTitle = (row: HTMLElement): string => {
+      const col2 = row.querySelector<HTMLElement>("div[aria-colindex='2'], [data-testid='tracklist-col-2']");
+      if (col2) {
+        const link = col2.querySelector<HTMLElement>("a[data-testid='internal-track-link'], a[href*='/track/'], a, [dir='auto']");
+        if (link) {
+          const t = (link.getAttribute("title") || link.textContent || "").replace(/\s+/g, " ").trim();
+          if (t) return t;
+        }
+        const t = (col2.textContent || "").replace(/\s+/g, " ").trim();
+        if (t) return t;
+      }
+
+      const trackLink = row.querySelector<HTMLElement>(
+        "a[data-testid='internal-track-link'], a[href*='/track/'], [data-testid='track-name'], a.standalone-ellipsis-one-line, .standalone-ellipsis-one-line"
+      );
+      if (trackLink) {
+        const t = (trackLink.getAttribute("title") || trackLink.textContent || "").replace(/\s+/g, " ").trim();
+        if (t) return t;
+      }
+
+      const col1 = row.querySelector<HTMLElement>("div[aria-colindex='1']");
+      const candidates = Array.from(row.querySelectorAll<HTMLElement>("a, span, div"))
+        .filter((el) => !col1 || !col1.contains(el))
+        .map((el) => (el.textContent || "").replace(/\s+/g, " ").trim())
+        .filter((t) => t.length >= 2 && !/^\d+$/.test(t));
+
+      return candidates[0] || (row.textContent || "").replace(/\s+/g, " ").trim();
+    };
+
+    // 3. Spotify Top Result Card
+    const topCard = document.querySelector<HTMLElement>(
+      "[data-testid='top-result-card'], [data-testid='heropod-card'], section[data-testid='top-result-card'], .top-result-card"
+    );
+    if (topCard) {
+      topCard.dispatchEvent(new PointerEvent("pointerover", { bubbles: true, cancelable: true }));
+      topCard.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true, cancelable: true }));
+
+      const topTitle = extractSpotifyTopCardTitle(topCard);
+      const rect = topCard.getBoundingClientRect();
+      const isInFirstView = rect.top < window.innerHeight && rect.bottom > 40;
+
+      if (!checkFirstViewOnly || isInFirstView) {
+        let { isMatch, score } = scoreMediaCandidate(topTitle, rawQuery, false);
+        if (!isMatch && topCard.textContent && topCard.textContent.toLowerCase().includes(rawQuery.toLowerCase().trim())) {
+          isMatch = true;
+          score = 120;
+        }
+
+        if (isMatch && score > 0) {
+          const playBtn = topCard.querySelector<HTMLElement>(
+            "button[data-testid='play-button'], button[data-encore-id='buttonPrimary'], button[aria-label*='Play' i], [data-testid='action-bar-row'] button, button.Button-sc-1dqy6lx-0"
+          ) || topCard;
+          scoredCards.push({
+            cardEl: topCard,
+            clickEl: playBtn,
+            title: topTitle || rawQuery,
+            score: score + 50, // Curated top card priority
+            isInFirstView
+          });
+        }
+      }
+    }
+
+    // 4. Spotify Tracklist Rows
+    const trackRows = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        "[data-testid='tracklist-row'], div[role='row'][aria-rowindex], [data-testid='search-tracks-result'] [role='row']"
+      )
+    );
+    for (const row of trackRows) {
+      const title = extractSpotifyTrackRowTitle(row);
+      if (!title || /^\d+$/.test(title)) continue;
+
+      const rect = row.getBoundingClientRect();
+      const isInFirstView = rect.top < window.innerHeight && rect.bottom > 40;
+      if (checkFirstViewOnly && !isInFirstView) {
+        continue;
+      }
+
+      const { isMatch, score } = scoreMediaCandidate(title, rawQuery, false);
+      if (isMatch && score > 0) {
+        row.dispatchEvent(new PointerEvent("pointerover", { bubbles: true, cancelable: true }));
+        row.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true, cancelable: true }));
+
+        const playBtn = row.querySelector<HTMLElement>(
+          "button[data-testid='play-button'], button[data-encore-id='buttonPrimary'], button[aria-label*='Play' i], [aria-label*='Play' i]"
+        ) || row;
+        scoredCards.push({
+          cardEl: row,
+          clickEl: playBtn,
+          title,
+          score,
+          isInFirstView
+        });
+      }
+    }
+
+    // 5. Other Audio Streaming Platforms (SoundCloud, JioSaavn, Gaana, Apple Music, YouTube Music, etc.)
+    if (!isSpotify) {
+      const genericAudioItems = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          "ytmusic-responsive-list-item-renderer, ytmusic-card-shelf-renderer, .soundList__item, .searchItem, .o-song, .c-preview, article[data-testid='song-card'], .trackItem, .track-item, [role='row'], article[data-testid], li[data-testid*='track'], [data-testid='track-lockup'], .s_item, li.s_item, .track_item, div[data-value*='song'], .song_item, .c-song, .queue_item, li:has(a[href*='/song/']), div:has(a[href*='/song/'])"
+        )
+      );
+      for (const item of genericAudioItems) {
+        const titleEl = item.querySelector<HTMLElement>(
+          ".title a, yt-formatted-string.title, a#video-title, .soundTitle__title, .track-name, .song-name, [data-testid='track-title'], .s_title, a[href*='/song/'], a[href*='/track/'], [class*='title' i], a"
+        );
+        const title = (titleEl?.getAttribute("title") || titleEl?.textContent || item.textContent || "").replace(/\s+/g, " ").trim();
+        if (!title || title.length < 2) continue;
+
+        const rect = item.getBoundingClientRect();
+        const isInFirstView = rect.top < window.innerHeight && rect.bottom > 40;
+        if (checkFirstViewOnly && !isInFirstView) continue;
+
+        const { isMatch, score } = scoreMediaCandidate(title, rawQuery, false);
+        if (isMatch && score > 0) {
+          item.dispatchEvent(new PointerEvent("pointerover", { bubbles: true, cancelable: true }));
+          item.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true, cancelable: true }));
+          const playBtn = item.querySelector<HTMLElement>(
+            "ytmusic-play-button-renderer button, #play-button button, button[aria-label*='Play' i], button.playButton, button.play, .play_btn, .round_play_btn, a.playSong, button.c-play, [data-testid*='play' i], [data-value*='play' i], [class*='play' i]"
+          ) || titleEl || item;
+          scoredCards.push({
+            cardEl: item,
+            clickEl: playBtn,
+            title,
+            score,
+            isInFirstView
+          });
+        }
+      }
+    }
+  }
+
+  // C. Google Search Results (Video Rich Cards, e.g. when landing on Google search)
+  if (isGoogle) {
+    const googleVideoCards = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        "div[data-sokoban-container], div.video-voyager, div.g:has(a[href*='youtube.com/watch']), a[href*='youtube.com/watch']"
+      )
+    );
+
+    for (const card of googleVideoCards) {
+      const linkEl = (card.tagName.toLowerCase() === "a" ? card : card.querySelector<HTMLAnchorElement>("a[href*='youtube.com/watch'], a[href*='youtu.be']")) as HTMLAnchorElement | null;
+      const titleEl = card.querySelector<HTMLElement>("h3, .yTDLnd, .vvjwJb, [role='heading']") || linkEl;
+      const title = (titleEl?.textContent || "").replace(/\s+/g, " ").trim();
+      if (!title || title.length < 2) continue;
+
+      const rect = card.getBoundingClientRect();
+      const isInFirstView = rect.top < window.innerHeight && rect.bottom > 40 && rect.height > 20;
+
+      if (checkFirstViewOnly && !isInFirstView) continue;
+
+      const { isMatch, score } = scoreMediaCandidate(title, rawQuery, false);
+      if (isMatch && score > 0) {
+        scoredCards.push({
+          cardEl: card,
+          clickEl: linkEl || titleEl || card,
+          title,
+          score: score + (isInFirstView ? 15 : 0),
+          isInFirstView
+        });
+      }
+    }
+  }
+
+  // D. Generic Media Fallback
+  if (!isYouTube && !isSpotify && !isGoogle) {
+    const genericCards = Array.from(document.querySelectorAll<HTMLElement>("article, .video-card, .track-item, [role='listitem'], div.item, li"));
+    for (const card of genericCards) {
+      const titleEl = card.querySelector<HTMLElement>("h2, h3, h4, a.title, .track-title, [class*='title' i]");
+      const title = (titleEl?.textContent || card.textContent || "").trim();
+      if (!title || title.length < 3) continue;
+
+      const rect = card.getBoundingClientRect();
+      const isInFirstView = rect.top < window.innerHeight && rect.bottom > 40;
+      if (checkFirstViewOnly && !isInFirstView) continue;
+
+      const { isMatch, score } = scoreMediaCandidate(title, rawQuery, false);
+      if (isMatch && score > 0) {
+        const clickEl = card.querySelector<HTMLElement>("button[aria-label*='Play' i], button.play, a[href]") || titleEl || card;
+        scoredCards.push({
+          cardEl: card,
+          clickEl,
+          title,
+          score,
+          isInFirstView
+        });
+      }
+    }
+  }
+
+  if (scoredCards.length === 0) {
+    return {
+      success: false,
+      mediaFound: false,
+      error: checkFirstViewOnly
+        ? `No verified match for "${rawQuery}" visible on screen in first view.`
+        : `Could not find verified video/song for "${rawQuery}". Refusing random clicks.`
+    };
+  }
+
+  scoredCards.sort((a, b) => b.score - a.score);
+  const best = scoredCards[0];
+
+  // Visual pulse HUD around the verified card
+  try {
+    const rect = best.cardEl.getBoundingClientRect();
+    const overlay = document.createElement("div");
+    overlay.style.position = "fixed";
+    overlay.style.left = `${Math.max(0, rect.left)}px`;
+    overlay.style.top = `${Math.max(0, rect.top)}px`;
+    overlay.style.width = `${Math.min(window.innerWidth, rect.width)}px`;
+    overlay.style.height = `${rect.height}px`;
+    overlay.style.border = "3px solid #10b981";
+    overlay.style.boxShadow = "0 0 25px rgba(16, 185, 129, 0.95)";
+    overlay.style.borderRadius = "8px";
+    overlay.style.pointerEvents = "none";
+    overlay.style.zIndex = "2147483647";
+    overlay.style.transition = "all 0.2s ease";
+
+    const badge = document.createElement("div");
+    badge.textContent = `▶ Verified Media: ${best.title.slice(0, 40)}`;
+    badge.style.position = "absolute";
+    badge.style.top = "-26px";
+    badge.style.left = "8px";
+    badge.style.background = "#10b981";
+    badge.style.color = "#000";
+    badge.style.fontWeight = "bold";
+    badge.style.fontSize = "12px";
+    badge.style.padding = "2px 8px";
+    badge.style.borderRadius = "4px";
+    overlay.appendChild(badge);
+    document.body.appendChild(overlay);
+
+    setTimeout(() => overlay.remove(), 2400);
+  } catch (e) {}
+
+  try {
+    best.cardEl.scrollIntoView({ behavior: "smooth", block: "center" });
+  } catch (e) {}
+
+  if (isAudioPlatform || isSpotify) {
+    // 1. Hover the card/row to reveal Spotify / Web Player dynamic play buttons
+    best.cardEl.dispatchEvent(new PointerEvent("pointerover", { bubbles: true, cancelable: true, view: window }));
+    best.cardEl.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, cancelable: true, view: window }));
+    best.cardEl.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true, cancelable: true, view: window }));
+
+    // Wait 150ms for React / framework to mount dynamic play button into DOM
+    await new Promise((r) => setTimeout(r, 150));
+
+    // 2. Locate the dedicated Play button strictly for the SEARCH SONG (Never the downside footer!)
+    let playBtn =
+      best.cardEl.querySelector<HTMLElement>(
+        "button[data-testid='play-button'], button[data-encore-id='buttonPrimary'], button[aria-label*='Play' i], [data-testid='action-bar-row'] button, button.Button-sc-1dqy6lx-0, .CardButton-sc-1dqy6lx-0 button, ytmusic-play-button-renderer button, #play-button button, button.playButton, button.play, .play_btn, button.c-play, [data-testid*='play' i]"
+      ) ||
+      (best.clickEl && best.clickEl.tagName.toLowerCase() === "button" ? best.clickEl : null) ||
+      best.clickEl.querySelector<HTMLElement>("button[data-testid='play-button'], button[aria-label*='Play' i], button");
+
+    // Priority B: If not found directly inside best.cardEl, search main area for the search song's play button
+    if (!playBtn) {
+      const mainButtons = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          "#main button[data-testid='play-button'], [role='main'] button[data-testid='play-button'], [data-testid='top-result-card'] button, [data-testid='tracklist-row'] button, button[data-testid='play-button'], button[data-encore-id='buttonPrimary'], button[aria-label*='Play' i]"
+        )
+      );
+      playBtn = mainButtons.find((b) => {
+        if (b.closest("footer, [data-testid='now-playing-bar'], [data-testid='playback-control-bar'], .playback-bar, [data-testid='bottom-player']")) return false;
+        if (b.getAttribute("data-testid") === "control-button-playpause") return false;
+        return true;
+      }) || null;
+    }
+
+    if (playBtn) {
+      playBtn.scrollIntoView({ behavior: "instant", block: "center" });
+      playBtn.focus();
+
+      const rect = playBtn.getBoundingClientRect();
+      const clientX = Math.round(rect.left + (rect.width > 0 ? rect.width / 2 : 10));
+      const clientY = Math.round(rect.top + (rect.height > 0 ? rect.height / 2 : 10));
+
+      let realClickTriggered = false;
+
+      // 1. Primary: Genuine Hardware Click via Chrome DevTools Protocol (isTrusted: true)
+      try {
+        const cdpResponse: any = await new Promise((resolve) => {
+          chrome.runtime.sendMessage(
+            { action: "DISPATCH_REAL_CLICK", x: clientX, y: clientY },
+            (response) => {
+              if (chrome.runtime.lastError || !response?.success) {
+                resolve({ success: false });
+              } else {
+                resolve(response);
+              }
+            }
+          );
+        });
+
+        if (cdpResponse && cdpResponse.success) {
+          realClickTriggered = true;
+        }
+      } catch (cdpErr) {
+        realClickTriggered = false;
+      }
+
+      // 2. High-Impact Trigger: Click play button & inner icon
+      if (!realClickTriggered) {
+        const inner = playBtn.querySelector<HTMLElement>("span, svg, path") || playBtn;
+
+        const pointerInit: PointerEventInit = {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          view: window,
+          clientX,
+          clientY,
+          screenX: clientX,
+          screenY: clientY,
+          button: 0,
+          buttons: 1,
+          pointerId: 1,
+          pointerType: "mouse",
+          isPrimary: true
+        };
+
+        const mouseInit: MouseEventInit = {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          view: window,
+          clientX,
+          clientY,
+          screenX: clientX,
+          screenY: clientY,
+          button: 0,
+          buttons: 1
+        };
+
+        try {
+          playBtn.dispatchEvent(new PointerEvent("pointerover", pointerInit));
+          playBtn.dispatchEvent(new PointerEvent("pointerenter", pointerInit));
+          playBtn.dispatchEvent(new MouseEvent("mouseover", mouseInit));
+
+          playBtn.dispatchEvent(new PointerEvent("pointerdown", pointerInit));
+          playBtn.dispatchEvent(new MouseEvent("mousedown", mouseInit));
+
+          playBtn.dispatchEvent(new PointerEvent("pointerup", { ...pointerInit, buttons: 0 }));
+          playBtn.dispatchEvent(new MouseEvent("mouseup", { ...mouseInit, buttons: 0 }));
+
+          // Native click on button and inner target
+          playBtn.click();
+          if (inner && inner !== playBtn) {
+            try { inner.click(); } catch (err) {}
+          }
+        } catch (e) {
+          try { playBtn.click(); } catch (err) {}
+        }
+      }
+
+      // 3. Desktop Web Double-Click & Enter Trigger on verified track row / card
+      try {
+        const trackRow =
+          best.cardEl.closest<HTMLElement>("[data-testid='tracklist-row'], [role='row']") ||
+          document.querySelector<HTMLElement>("[data-testid='tracklist-row'], [role='row']");
+
+        if (trackRow) {
+          trackRow.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, view: window }));
+        }
+
+        // Send Enter key on the focused button
+        playBtn.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true }));
+        playBtn.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true }));
+      } catch (err) {}
+    } else {
+      // Fallback only if no dedicated play button exists:
+      const isTracklistRow =
+        best.cardEl.getAttribute("data-testid") === "tracklist-row" ||
+        best.cardEl.getAttribute("role") === "row" ||
+        best.cardEl.classList.contains("trackItem") ||
+        best.cardEl.classList.contains("track-item");
+
+      if (isTracklistRow) {
+        best.cardEl.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, view: window }));
+      } else {
+        best.clickEl.click();
+      }
+    }
+
+    // 3. Handle Auth/Login Modal dismissal if Spotify pops up unauthenticated barrier
+    setTimeout(() => {
+      try {
+        const authModal = document.querySelector<HTMLElement>(
+          "[data-testid='auth-modal'], div[role='dialog'], aside.modalLayer, .GenericModal"
+        );
+        if (authModal) {
+          const closeBtn = authModal.querySelector<HTMLElement>(
+            "button[data-testid='close-button'], button[aria-label*='Close' i], button[aria-label*='Dismiss' i]"
+          );
+          if (closeBtn) closeBtn.click();
+          window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
+        }
+      } catch (e) {}
+    }, 300);
+
+    return {
+      success: true,
+      mediaFound: true,
+      mediaTitle: best.title,
+      result: `Playing verified track: "${best.title}"`
+    };
+  }
+
+  const anchorEl =
+    ((best.clickEl.tagName.toLowerCase() === "a" ? best.clickEl : best.clickEl.closest("a")) as HTMLAnchorElement | null) ||
+    best.cardEl.querySelector<HTMLAnchorElement>(
+      "a#video-title, a#video-title-link, .yt-lockup-metadata-view-model-wiz__title, a[href*='/watch?v='], a#thumbnail, a[href*='/watch']"
+    ) ||
+    (best.clickEl as HTMLAnchorElement);
+
+  if (anchorEl) {
+    anchorEl.focus();
+    anchorEl.dispatchEvent(new PointerEvent("pointerover", { bubbles: true, cancelable: true }));
+    anchorEl.dispatchEvent(new PointerEvent("pointerenter", { bubbles: true, cancelable: true }));
+    anchorEl.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+    anchorEl.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, cancelable: true }));
+    anchorEl.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    anchorEl.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true }));
+    anchorEl.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+    anchorEl.click();
+
+    const targetHref = anchorEl.href;
+    if (targetHref && (targetHref.includes("/watch") || targetHref.includes("youtu.be")) && isYouTube) {
+      setTimeout(() => {
+        if (!window.location.pathname.includes("/watch")) {
+          window.location.href = targetHref;
+        }
+      }, 350);
+    }
+  } else {
+    best.clickEl.click();
+  }
+
+  return {
+    success: true,
+    mediaFound: true,
+    mediaTitle: best.title,
+    result: `Found and playing verified media: "${best.title}"`
+  };
+}
+
 async function executeAgentAction(
   action: AgentAction
-): Promise<{ success: boolean; result?: string; error?: string; productFound?: boolean; productTitle?: string }> {
+): Promise<{ success: boolean; result?: string; error?: string; productFound?: boolean; productTitle?: string; mediaFound?: boolean; mediaTitle?: string }> {
   try {
     if (action.action === "scroll") {
       // 1. Scroll directly to targeted text or selector if specified
@@ -931,6 +1772,12 @@ async function executeAgentAction(
       return await findAndAddVerifiedProduct(query, checkFirstViewOnly);
     }
 
+    if (action.action === "find_and_play_media") {
+      const query = action.value || action.targetText || "";
+      const checkFirstViewOnly = action.amount === 1;
+      return await findAndPlayVerifiedMedia(query, checkFirstViewOnly);
+    }
+
     let targetEl: HTMLElement | null = null;
     if (typeof action.targetIndex === "number") {
       const pageInfo = getPageInformation();
@@ -964,11 +1811,8 @@ async function executeAgentAction(
       } else if (
         term.startsWith("open product") ||
         term.includes("open product") ||
-        term.includes("select product") ||
-        (document.querySelectorAll("[data-component-type='s-search-result'], .s-result-item[data-asin]:not([data-asin='']), .product-card").length > 0 &&
-          !term.includes("cart") &&
-          !term.includes("buy now") &&
-          !term.includes("proceed"))
+        term.startsWith("select product") ||
+        term.includes("select product")
       ) {
         // If the current URL is ALREADY a product page (e.g. /dp/ or /gp/product/), we don't need to open another product!
         if (window.location.href.includes("/dp/") || window.location.href.includes("/gp/product/")) {
@@ -1000,95 +1844,24 @@ async function executeAgentAction(
           .trim()
           .toLowerCase();
 
-        // 1. YouTube Video / Play Button Resolver
-        if (window.location.hostname.includes("youtube.com")) {
-          // If already on a watch page, ensure video plays
-          const videoEl = document.querySelector<HTMLVideoElement>("video");
-          if (videoEl && window.location.pathname.includes("/watch") && (!rawSongOrVideoQuery || rawSongOrVideoQuery.length < 3)) {
-            try {
-              videoEl.play();
-            } catch (e) {}
-            targetEl = document.querySelector<HTMLElement>("button.ytp-play-button") || videoEl;
-          } else {
-            // Find video renderers in search results
-            const videoCards = Array.from(
-              document.querySelectorAll<HTMLElement>("ytd-video-renderer, ytd-rich-item-renderer, ytd-grid-video-renderer")
-            );
-            if (videoCards.length > 0) {
-              let matchedTitle: HTMLElement | null = null;
-              if (rawSongOrVideoQuery) {
-                const queryTokens = rawSongOrVideoQuery.split(/\s+/).filter(Boolean);
-                for (const card of videoCards) {
-                  const titleEl = card.querySelector<HTMLElement>("#video-title, a#thumbnail, a#video-title-link");
-                  const cardText = (card.innerText || card.textContent || "").toLowerCase();
-                  if (queryTokens.every((t) => cardText.includes(t)) || queryTokens.some((t) => cardText.includes(t))) {
-                    matchedTitle = titleEl || card.querySelector("a") || card;
-                    break;
-                  }
-                }
-              }
-              if (!matchedTitle && videoCards[0]) {
-                matchedTitle = videoCards[0].querySelector<HTMLElement>("#video-title, a#thumbnail, a#video-title-link") || videoCards[0];
-              }
-              if (matchedTitle) {
-                targetEl = matchedTitle;
-              }
-            }
-          }
+        const query = rawSongOrVideoQuery || action.value || "";
+        const mediaRes = await findAndPlayVerifiedMedia(query, false);
+        if (mediaRes.success && mediaRes.mediaFound) {
+          return mediaRes;
         }
 
-        // 2. Spotify Track / Play Button Resolver
-        if (!targetEl && window.location.hostname.includes("spotify.com")) {
-          // Check top result card play button
-          const topCardPlayBtn = document.querySelector<HTMLElement>(
-            "[data-testid='top-result-card'] button[data-testid='play-button'], [data-testid='top-result-card'] button[aria-label*='Play' i], [data-testid='top-result-card']"
+        // 3. Generic Audio / Video or Media Player fallback (only if already on media page or explicit play CTA)
+        if (term.startsWith("play") || term.startsWith("watch")) {
+          const candidates = Array.from(
+            document.querySelectorAll<HTMLElement>(
+              "button[aria-label*='play' i], button[title*='play' i], .play-btn, .btn-play, button.play, video, audio"
+            )
           );
-          if (
-            topCardPlayBtn &&
-            (!rawSongOrVideoQuery || (topCardPlayBtn.innerText || topCardPlayBtn.textContent || "").toLowerCase().includes(rawSongOrVideoQuery))
-          ) {
-            targetEl = topCardPlayBtn.querySelector("button") || topCardPlayBtn;
-          } else {
-            // Track list rows
-            const trackRows = Array.from(
-              document.querySelectorAll<HTMLElement>("[data-testid='tracklist-row'], div[role='row']")
-            );
-            if (trackRows.length > 0) {
-              let matchedRow: HTMLElement | null = null;
-              if (rawSongOrVideoQuery) {
-                const queryTokens = rawSongOrVideoQuery.split(/\s+/).filter(Boolean);
-                for (const row of trackRows) {
-                  const rowText = (row.innerText || row.textContent || "").toLowerCase();
-                  if (queryTokens.some((t) => rowText.includes(t))) {
-                    matchedRow = row;
-                    break;
-                  }
-                }
-              }
-              if (!matchedRow && trackRows[0]) {
-                matchedRow = trackRows[0];
-              }
-              if (matchedRow) {
-                matchedRow.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
-                matchedRow.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
-                const rowPlayBtn = matchedRow.querySelector<HTMLElement>("button[data-testid='play-button'], button[aria-label*='Play' i]");
-                targetEl = rowPlayBtn || matchedRow;
-              }
-            } else if (topCardPlayBtn) {
-              targetEl = topCardPlayBtn.querySelector("button") || topCardPlayBtn;
-            } else {
-              targetEl = document.querySelector<HTMLElement>(
-                "button[data-testid='play-button'], button[aria-label^='Play'], [data-testid='control-button-playpause']"
-              );
-            }
-          }
-        }
-
-        // 3. Generic Audio / Video or Media Player fallback
-        if (!targetEl) {
-          targetEl = document.querySelector<HTMLElement>(
-            "button[aria-label*='play' i], button[title*='play' i], .play-btn, .btn-play, button.play, video, audio"
-          );
+          targetEl = candidates.find((b) => {
+            if (b.closest("footer, [data-testid='now-playing-bar'], [data-testid='playback-control-bar'], .playback-bar, [data-testid='bottom-player']")) return false;
+            if (b.getAttribute("data-testid") === "control-button-playpause") return false;
+            return true;
+          }) || null;
         }
       } else if (term.includes("cart") || term === "cart") {
         targetEl = document.querySelector<HTMLElement>(
@@ -1104,17 +1877,30 @@ async function executeAgentAction(
       }
     }
 
-    // Fallback for generic click ONLY if no target text and no target index was provided (e.g. "click here")
+    // Fallback for generic click ONLY if no target text and no target index was provided (e.g. "click here", "click this button or link on the screen")
     if (!targetEl && action.action === "click" && !action.targetText && typeof action.targetIndex !== "number") {
       // 1. Currently focused element if interactive
       const active = document.activeElement as HTMLElement | null;
-      if (active && active !== document.body && /button|a|input/i.test(active.tagName)) {
+      if (active && active !== document.body && /button|a|input|select|textarea/i.test(active.tagName)) {
         targetEl = active;
       } else {
         // 2. Most prominent primary CTA on the page
         targetEl = document.querySelector<HTMLElement>(
           "#add-to-cart-button, #btn-proceed-checkout, button[type='submit'], .btn-primary, button.primary, #proceed, #buy-now-button, #btn-track-order-9821, #btn-nav-cart"
         );
+      }
+      // 3. If still no target, locate the first visible interactive button/link in the current viewport
+      if (!targetEl) {
+        const visibleInteractives = Array.from(
+          document.querySelectorAll<HTMLElement>("button:not([disabled]), a[href]:not([href='#']):not([href='']), [role='button'], input[type='button'], input[type='submit']")
+        ).filter((el) => {
+          if (el.offsetParent === null && !el.getClientRects().length) return false;
+          const rect = el.getBoundingClientRect();
+          return rect.top >= 0 && rect.bottom <= window.innerHeight && rect.left >= 0 && rect.right <= window.innerWidth && rect.width >= 16 && rect.height >= 16;
+        });
+        if (visibleInteractives.length > 0) {
+          targetEl = visibleInteractives[0];
+        }
       }
     }
 
@@ -1142,8 +1928,12 @@ async function executeAgentAction(
       };
     }
 
-    targetEl.scrollIntoView({ behavior: "smooth", block: "center" });
-    await new Promise((r) => setTimeout(r, 200));
+    const targetRect = targetEl.getBoundingClientRect();
+    const isComfortablyInViewport = targetRect.top >= 40 && targetRect.bottom <= window.innerHeight - 20;
+    if (!isComfortablyInViewport) {
+      targetEl.scrollIntoView({ behavior: "smooth", block: "center" });
+      await new Promise((r) => setTimeout(r, 200));
+    }
 
     if (action.action === "click") {
       const isEcommerceBuyOrCart =
@@ -1267,11 +2057,30 @@ async function executeAgentAction(
       setTimeout(clearHighlightOverlay, 900);
 
       targetEl.focus();
-      targetEl.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, view: window }));
-      targetEl.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window, buttons: 1 }));
-      targetEl.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true, view: window }));
-      targetEl.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
-      targetEl.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+
+      const elRect = targetEl.getBoundingClientRect();
+      const clientX = Math.round(elRect.left + (elRect.width > 0 ? elRect.width / 2 : 10));
+      const clientY = Math.round(elRect.top + (elRect.height > 0 ? elRect.height / 2 : 10));
+
+      // 1. Primary: Genuine Hardware Click via Chrome DevTools Protocol (isTrusted: true)
+      let hardwareClicked = false;
+      try {
+        const cdpRes: any = await new Promise((resolve) => {
+          chrome.runtime.sendMessage(
+            { action: "DISPATCH_REAL_CLICK", x: clientX, y: clientY },
+            (response) => resolve(response || { success: false })
+          );
+        });
+        if (cdpRes?.success) hardwareClicked = true;
+      } catch (e) {}
+
+      if (!hardwareClicked) {
+        targetEl.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, view: window }));
+        targetEl.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window, buttons: 1 }));
+        targetEl.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true, view: window }));
+        targetEl.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
+        targetEl.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+      }
       targetEl.click();
 
       // Spotify track rows start playback upon double-click

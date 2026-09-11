@@ -9,7 +9,8 @@
     "tabs",
     "scripting",
     "storage",
-    "sidePanel"
+    "sidePanel",
+    "debugger"
   ],
 
   "host_permissions": [

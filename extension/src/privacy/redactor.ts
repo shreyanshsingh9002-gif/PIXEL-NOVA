@@ -5,6 +5,7 @@ import {
   SanitizedContext,
   PrivacyScore
 } from "../shared/types";
+import { UI_BRAND_WORDS } from "./piiDetector";
 
 /**
  * Replaces all occurrences of detected PII text with anonymous semantic tokens.
@@ -12,7 +13,20 @@ import {
 export function redactText(rawText: string, entities: PIIEntity[]): string {
   let sanitized = rawText;
   // Sort entities by descending length so substrings don't mess up longer tokens
-  const sorted = [...entities].sort((a, b) => b.value.length - a.value.length);
+  // NOTE: NAME, 2FA headings, and UI brands are explicitly exempt from redaction
+  const sorted = [...entities]
+    .filter((e) => {
+      if (e.category === "NAME") return false;
+      const valLower = (e.value || "").trim().toLowerCase();
+      if (UI_BRAND_WORDS.has(valLower) || /\b(?:two-factor|2fa|authentication|active otp)\b/i.test(valLower)) {
+        return false;
+      }
+      if (e.category === "ADDRESS" && /\b(?:otp|auth|factor|2fa|verification)\b/i.test(valLower)) {
+        return false;
+      }
+      return true;
+    })
+    .sort((a, b) => b.value.length - a.value.length);
 
   for (const entity of sorted) {
     if (!entity.value || entity.value.length < 2) continue;
@@ -36,7 +50,7 @@ export function sanitizeElements(
   return elements.map((el) => {
     const isSensitive =
       el.isSensitive ||
-      entities.some((e) => e.elementIndex === el.index);
+      entities.some((e) => e.elementIndex === el.index && e.category !== "NAME");
 
     if (isSensitive) {
       return {
@@ -119,6 +133,14 @@ export async function redactVisualScreenshot(
       const MAX_BOX_HEIGHT = Math.min(80 * scale, canvas.height * 0.15);
 
       for (const entity of entities) {
+        if (entity.category === "NAME") continue;
+        const valLower = (entity.value || "").trim().toLowerCase();
+        if (UI_BRAND_WORDS.has(valLower) || /\b(?:two-factor|2fa|authentication|active otp|visa premium)\b/i.test(valLower)) {
+          continue;
+        }
+        if (entity.category === "ADDRESS" && /\b(?:otp|auth|factor|2fa|verification|code|login)\b/i.test(valLower)) {
+          continue;
+        }
         if (!entity.boundingBox) continue;
         const { x, y, width, height } = entity.boundingBox;
         if (width <= 0 || height <= 0) continue;

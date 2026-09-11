@@ -119,24 +119,28 @@ async def plan_action(request: PlanRequest) -> PlanResponse:
 
     if gemini_key:
         try:
-            # Build element descriptions (de-duped, limit 40)
+            # Build element descriptions (de-duped, prioritize high-value elements, up to 60)
             seen = set()
             elements_desc = []
-            for el in request.safeElements[:60]:
+            sorted_elements = sorted(
+                request.safeElements[:120],
+                key=lambda el: 0 if el.tag in ["button", "input", "select"] or "btn" in (el.selector or "").lower() else 1
+            )
+            for el in sorted_elements:
                 label = (el.text or el.ariaLabel or el.placeholder or el.id or el.name or "(unlabeled)")
-                clean_label = label.replace("\n", " ").strip()[:80]
+                clean_label = label.replace("\n", " ").strip()[:90]
                 line = f"[{el.index}] <{el.tag}> '{clean_label}' (selector: {el.selector})"
                 if line not in seen:
                     seen.add(line)
                     elements_desc.append(line)
-                if len(elements_desc) >= 40:
+                if len(elements_desc) >= 60:
                     break
 
             dynamic_query = extract_query_from_goal(request.goal)
 
-            prompt = f"""You are PIXEL NOVA's Remote Brain — an autonomous browser AI agent planner.
+            prompt = f"""You are PIXEL NOVA's Remote Brain — a privacy-first autonomous browser AI agent planner.
 All PII on the page has already been redacted on-device into safe tokens (e.g. [EMAIL_1], [PHONE_1], ████).
-Your job: output the single best NEXT action to accomplish the user's goal.
+Your job: output the single best NEXT action to accomplish the user's goal on ANY website.
 
 USER GOAL: "{request.goal}"
 PAGE TITLE: "{request.title}"
@@ -146,16 +150,25 @@ AVAILABLE INTERACTIVE ELEMENTS:
 {chr(10).join(elements_desc)}
 
 SANITIZED PAGE TEXT (preview):
-{request.sanitizedText[:1400]}
+{request.sanitizedText[:1600]}
 
-DECISION RULES:
-1. To type/search: action=type, targetIndex=<index>, selector=<selector>, value="{dynamic_query}" (the EXACT query the user wants, extracted from their goal)
-2. To auto-fill form/credentials/identity: action=autofill
-3. To click a button/link/tab/card: action=click, targetIndex=<index>, selector=<selector>
-4. To navigate to any website/URL: action=navigate, value="<url_or_domain>"
-5. To scroll: action=scroll, direction=down, amount=450
-6. Goal already fulfilled: action=finish
-7. Choose the option with highest confidence.
+DECISION RULES & HYBRID HEURISTICS:
+1. Search & Input:
+   - To type or search: action=type, targetIndex=<index>, selector=<selector>, value="{dynamic_query}"
+2. E-Commerce (Amazon, Flipkart, Myntra, Walmart, Target, etc.):
+   - When searching for a product (e.g. "iPhone 17 Pro", "MacBook M4"):
+     * Select the actual genuine product title/card link.
+     * NEVER select accessories (phone cases, covers, tempered glass, cables) when user asks for a device.
+     * If the exact model number is future/unreleased (e.g. iPhone 17), pick the top genuine flagship phone on screen.
+     * NEVER select sponsored ads if an organic product is available.
+   - On a product page: select "Add to Cart" or "Buy Now" button.
+3. Audio & Video Streaming (YouTube, Spotify, Gaana, JioSaavn, SoundCloud, Apple Music):
+   - Select the verified track title or play button for the requested song.
+   - NEVER select the bottom footer player or previously playing song.
+4. Auto-Fill: To fill credentials/forms/address: action=autofill
+5. General Click: action=click, targetIndex=<index>, selector=<selector>
+6. Scrolling: If the target item is clearly not visible in the preview, action=scroll, direction=down, amount=500
+7. Done: If the goal is fulfilled: action=finish
 
 Respond ONLY with raw JSON (no markdown, no backticks):
 {{

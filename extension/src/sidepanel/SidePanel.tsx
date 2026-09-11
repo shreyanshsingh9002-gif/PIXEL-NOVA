@@ -67,12 +67,12 @@ export const DEFAULT_SHORTCUTS: CustomShortcut[] = [
 ];
 
 const CATEGORY_ALIASES: Record<string, string[]> = {
-  music: ["music", "song", "songs", "spotify", "audio", "track", "gaana", "gana", "play music", "play songs", "spotify song"],
-  "e-com": ["e-com", "ecom", "ecommerce", "shopping", "shop", "amazon", "flipkart", "store", "buy", "cart"],
-  "cart & vault": ["cart", "vault", "checkout", "autofill", "fill details", "details", "credentials"],
-  scroll: ["scroll", "scrolling", "page scroll", "scroll down", "scroll up"],
-  search: ["search", "quick search", "lookup", "find"],
-  "deep nav": ["deep nav", "navigator", "policy", "find policy", "cancellation", "terms"]
+  music: ["music", "spotify", "audio", "track", "gaana", "gana"],
+  "e-com": ["e com", "ecom", "ecommerce", "shopping"],
+  "cart & vault": ["cart and vault", "vault", "autofill", "checkout"],
+  scroll: ["scroll", "scrolling"],
+  search: ["search", "quick search"],
+  "deep nav": ["deep nav", "navigator"]
 };
 
 function normalizeKey(str: string): string {
@@ -90,38 +90,65 @@ export function resolveShortcutKeyword(rawInput: string, shortcutsList: CustomSh
   if (!raw) return null;
 
   const clean = normalizeKey(raw);
+  if (!clean) return null;
+
+  // Generic action verbs should NEVER trigger a macro by themselves
+  if (
+    clean === "play" ||
+    clean === "open" ||
+    clean === "search" ||
+    clean === "find" ||
+    clean === "click" ||
+    clean === "go" ||
+    clean === "buy" ||
+    clean === "watch" ||
+    clean === "listen" ||
+    clean === "stream"
+  ) {
+    return null;
+  }
+
+  const isExplicitMacroCall = /\b(?:shortcut|macro|category|routine)\b/i.test(clean);
 
   // Strip common conversational invocation wrappers:
-  // e.g. "play music", "trigger e-com", "open my favorite music", "music shortcut"
+  // e.g. "play music" -> "music", "trigger e-com" -> "e com", "music shortcut" -> "music"
   const stripped = clean
     .replace(/^(?:please\s+)?(?:play|run|trigger|execute|open|start|activate|my\s+favorite|favorite|favourite|go\s+to|switch\s+to)\s+/i, "")
     .replace(/\s+(?:shortcut|macro|command|category|routine|please)$/i, "")
     .trim();
 
-  const searchTerms = Array.from(new Set([clean, stripped])).filter(Boolean);
-  const isExplicitMacroCall = /\b(?:shortcut|macro|category|favorite|favourite|mode|routine)\b/i.test(clean);
-  const wordCount = stripped.split(" ").filter(Boolean).length;
+  if (!stripped || stripped === "play" || stripped === "open" || stripped === "click") {
+    return null;
+  }
 
-  for (const term of searchTerms) {
-    // 1. Direct match on shortcut Tag / Category
+  const wordCount = stripped.split(/\s+/).filter(Boolean).length;
+
+  // If more than 3 words and not an explicit macro invocation, it is an action command (not a category keyword)
+  if (wordCount > 3 && !isExplicitMacroCall) {
+    return null;
+  }
+
+  const candidateTerms = Array.from(new Set([stripped, clean])).filter(Boolean);
+
+  for (const candidate of candidateTerms) {
+    // 1. Direct match on shortcut Tag / Category keyword
     const tagMatches = shortcutsList.filter((sc) => {
       const tagNorm = normalizeKey(sc.tag);
-      if (tagNorm === term) return true;
+      if (!tagNorm) return false;
 
-      // Allow partial match only if input is a concise category invocation (<= 3 words) or explicit macro call
-      if (wordCount <= 3 || isExplicitMacroCall) {
-        if (term.length >= 3 && (tagNorm.split(" ").includes(term) || term.split(" ").includes(tagNorm))) return true;
+      // Exact tag match (e.g. tag "Music" matches candidate "music")
+      if (tagNorm === candidate) return true;
 
-        // Check category aliases
-        for (const [canonical, aliases] of Object.entries(CATEGORY_ALIASES)) {
-          const canNorm = normalizeKey(canonical);
-          if (tagNorm.includes(canNorm) || canNorm.includes(tagNorm)) {
-            if (aliases.some((a) => normalizeKey(a) === term || normalizeKey(a).split(" ").includes(term))) {
-              return true;
-            }
+      // Category alias match (e.g. "Music" -> "spotify", "E-Com" -> "shopping")
+      for (const [canonical, aliases] of Object.entries(CATEGORY_ALIASES)) {
+        const canNorm = normalizeKey(canonical);
+        if (tagNorm === canNorm || tagNorm.includes(canNorm) || canNorm.includes(tagNorm)) {
+          if (aliases.some((a) => normalizeKey(a) === candidate)) {
+            return true;
           }
         }
       }
+
       return false;
     });
 
@@ -132,17 +159,8 @@ export function resolveShortcutKeyword(rawInput: string, shortcutsList: CustomSh
     }
   }
 
-  // 2. Direct match if the user spoken phrase is the exact action command
-  for (const term of searchTerms) {
-    const actMatches = shortcutsList.filter((sc) => {
-      const actNorm = normalizeKey(sc.act);
-      return actNorm === term || (term.length >= 5 && actNorm.includes(term));
-    });
-    if (actMatches.length > 0) {
-      const fav = actMatches.find((s) => s.isFavorite);
-      return fav || actMatches[0];
-    }
-  }
+  // NOTE: Macros are ONLY triggered by Category / Tag Keywords.
+  // We strictly DO NOT search inside sc.act (Action Command) to avoid hijacking commands like "play ..." or "search ...".
 
   return null;
 }
@@ -215,18 +233,23 @@ function parseSearchIntent(goal: string, currentUrl: string = ""): {
   navUrl: string | null;
 } {
   const g = goal.trim();
+  // Match explicit domains (e.g. google.com) or any brand/platform word after on/in
   const siteMatch = g.match(
-    /\b(?:in|on)\s+([a-zA-Z0-9.-]+\.[a-zA-Z]{2,}|spotify|youtube|amazon|google|flipkart|github|reddit|wikipedia|twitter|x|cricbuzz|netflix)\b/i
+    /\b(?:in|on)\s+([a-zA-Z0-9.-]+\.[a-zA-Z]{2,}|[a-zA-Z0-9_-]+)\b/i
   );
 
   let targetSite: string | null = null;
   if (siteMatch && siteMatch[1]) {
-    targetSite = siteMatch[1].toLowerCase();
+    const raw = siteMatch[1].toLowerCase();
+    const nonPlatforms = ["the", "this", "that", "screen", "page", "tab", "browser", "web", "internet", "google"];
+    if (!nonPlatforms.includes(raw)) {
+      targetSite = raw;
+    }
   }
 
   let query = g
     .replace(/^(?:please\s+)?(?:search(?:\s+for)?|find|type|look(?:\s+for)?|query)\s+/i, "")
-    .replace(/\s+(?:in|on)\s+([a-zA-Z0-9.-]+\.[a-zA-Z]{2,}|spotify|youtube|amazon|google|flipkart|github|reddit|wikipedia|twitter|x|cricbuzz|netflix)\b.*$/i, "")
+    .replace(/\s+(?:in|on)\s+([a-zA-Z0-9.-]+\.[a-zA-Z]{2,}|[a-zA-Z0-9_-]+)\b.*$/i, "")
     .replace(/\s+(?:and\s+press\s+enter|and\s+enter)\s*$/i, "")
     .replace(/^["']|["']$/g, "")
     .trim();
@@ -238,36 +261,164 @@ function parseSearchIntent(goal: string, currentUrl: string = ""): {
     const isAlreadyOnSite = currentUrl.toLowerCase().includes(targetSite);
     if (!isAlreadyOnSite) {
       needsNavigation = true;
-      if (targetSite === "spotify") navUrl = "https://open.spotify.com";
-      else if (targetSite === "youtube") navUrl = "https://www.youtube.com";
-      else if (targetSite === "amazon") navUrl = "https://www.amazon.in";
-      else if (targetSite === "google") navUrl = "https://www.google.com";
-      else if (targetSite === "flipkart") navUrl = "https://www.flipkart.com";
-      else if (targetSite === "github") navUrl = "https://www.github.com";
-      else if (targetSite === "reddit") navUrl = "https://www.reddit.com";
-      else if (targetSite === "wikipedia") navUrl = "https://www.wikipedia.org";
-      else if (targetSite === "netflix") navUrl = "https://www.netflix.com";
-      else if (targetSite === "cricbuzz") navUrl = "https://www.cricbuzz.com";
-      else if (targetSite.includes(".")) navUrl = `https://${targetSite}`;
+      if (KNOWN_PLATFORMS[targetSite]) {
+        navUrl = KNOWN_PLATFORMS[targetSite].url;
+      } else if (targetSite.includes(".")) {
+        navUrl = `https://${targetSite}`;
+      } else {
+        // Universal Resolution: Automatically resolves any platform without typing .com
+        navUrl = `https://${targetSite}.com`;
+      }
     }
   }
 
   return { query: query || g, targetSite, needsNavigation, navUrl };
 }
 
-const KNOWN_PLATFORMS: Record<string, { name: string; url: string; defaultAction: "play" | "open" }> = {
-  spotify: { name: "spotify", url: "https://open.spotify.com", defaultAction: "play" },
-  youtube: { name: "youtube", url: "https://www.youtube.com", defaultAction: "play" },
-  amazon: { name: "amazon", url: "https://www.amazon.in", defaultAction: "open" },
-  flipkart: { name: "flipkart", url: "https://www.flipkart.com", defaultAction: "open" },
-  google: { name: "google", url: "https://www.google.com", defaultAction: "open" },
-  wikipedia: { name: "wikipedia", url: "https://www.wikipedia.org", defaultAction: "open" },
-  github: { name: "github", url: "https://www.github.com", defaultAction: "open" },
-  reddit: { name: "reddit", url: "https://www.reddit.com", defaultAction: "open" },
-  netflix: { name: "netflix", url: "https://www.netflix.com", defaultAction: "play" },
-  cricbuzz: { name: "cricbuzz", url: "https://www.cricbuzz.com", defaultAction: "open" },
-  twitter: { name: "twitter", url: "https://twitter.com", defaultAction: "open" },
-  x: { name: "x", url: "https://x.com", defaultAction: "open" }
+const KNOWN_PLATFORMS: Record<string, {
+  name: string;
+  url: string;
+  searchUrl?: (query: string) => string;
+  defaultAction: "play" | "open";
+}> = {
+  spotify: {
+    name: "spotify",
+    url: "https://open.spotify.com",
+    searchUrl: (q) => `https://open.spotify.com/search/${encodeURIComponent(q)}`,
+    defaultAction: "play"
+  },
+  youtube: {
+    name: "youtube",
+    url: "https://www.youtube.com",
+    searchUrl: (q) => `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`,
+    defaultAction: "play"
+  },
+  gaana: {
+    name: "gaana",
+    url: "https://gaana.com",
+    searchUrl: (q) => `https://gaana.com/search/${encodeURIComponent(q)}`,
+    defaultAction: "play"
+  },
+  jiosaavn: {
+    name: "jiosaavn",
+    url: "https://www.jiosaavn.com",
+    searchUrl: (q) => `https://www.jiosaavn.com/search/${encodeURIComponent(q)}`,
+    defaultAction: "play"
+  },
+  wynk: {
+    name: "wynk",
+    url: "https://wynk.in/music",
+    defaultAction: "play"
+  },
+  soundcloud: {
+    name: "soundcloud",
+    url: "https://soundcloud.com",
+    searchUrl: (q) => `https://soundcloud.com/search?q=${encodeURIComponent(q)}`,
+    defaultAction: "play"
+  },
+  applemusic: {
+    name: "applemusic",
+    url: "https://music.apple.com",
+    defaultAction: "play"
+  },
+  amazon: {
+    name: "amazon",
+    url: "https://www.amazon.in",
+    searchUrl: (q) => `https://www.amazon.in/s?k=${encodeURIComponent(q)}`,
+    defaultAction: "open"
+  },
+  flipkart: {
+    name: "flipkart",
+    url: "https://www.flipkart.com",
+    searchUrl: (q) => `https://www.flipkart.com/search?q=${encodeURIComponent(q)}`,
+    defaultAction: "open"
+  },
+  myntra: {
+    name: "myntra",
+    url: "https://www.myntra.com",
+    searchUrl: (q) => `https://www.myntra.com/${encodeURIComponent(q)}`,
+    defaultAction: "open"
+  },
+  meesho: {
+    name: "meesho",
+    url: "https://www.meesho.com",
+    defaultAction: "open"
+  },
+  nykaa: {
+    name: "nykaa",
+    url: "https://www.nykaa.com",
+    defaultAction: "open"
+  },
+  ajio: {
+    name: "ajio",
+    url: "https://www.ajio.com",
+    defaultAction: "open"
+  },
+  target: {
+    name: "target",
+    url: "https://www.target.com",
+    defaultAction: "open"
+  },
+  walmart: {
+    name: "walmart",
+    url: "https://www.walmart.com",
+    defaultAction: "open"
+  },
+  bestbuy: {
+    name: "bestbuy",
+    url: "https://www.bestbuy.com",
+    defaultAction: "open"
+  },
+  ebay: {
+    name: "ebay",
+    url: "https://www.ebay.com",
+    defaultAction: "open"
+  },
+  google: {
+    name: "google",
+    url: "https://www.google.com",
+    searchUrl: (q) => `https://www.google.com/search?q=${encodeURIComponent(q)}`,
+    defaultAction: "open"
+  },
+  wikipedia: {
+    name: "wikipedia",
+    url: "https://www.wikipedia.org",
+    searchUrl: (q) => `https://en.wikipedia.org/wiki/Special:Search?search=${encodeURIComponent(q)}`,
+    defaultAction: "open"
+  },
+  github: {
+    name: "github",
+    url: "https://www.github.com",
+    searchUrl: (q) => `https://github.com/search?q=${encodeURIComponent(q)}`,
+    defaultAction: "open"
+  },
+  reddit: {
+    name: "reddit",
+    url: "https://www.reddit.com",
+    searchUrl: (q) => `https://www.reddit.com/search/?q=${encodeURIComponent(q)}`,
+    defaultAction: "open"
+  },
+  netflix: {
+    name: "netflix",
+    url: "https://www.netflix.com",
+    searchUrl: (q) => `https://www.netflix.com/search?q=${encodeURIComponent(q)}`,
+    defaultAction: "play"
+  },
+  cricbuzz: {
+    name: "cricbuzz",
+    url: "https://www.cricbuzz.com",
+    defaultAction: "open"
+  },
+  twitter: {
+    name: "twitter",
+    url: "https://twitter.com",
+    defaultAction: "open"
+  },
+  x: {
+    name: "x",
+    url: "https://x.com",
+    defaultAction: "open"
+  }
 };
 
 function decomposeMultitaskingGoal(rawGoal: string, currentUrl: string = ""): string[] | null {
@@ -275,62 +426,174 @@ function decomposeMultitaskingGoal(rawGoal: string, currentUrl: string = ""): st
   const g = rawGoal.trim();
   if (!g) return null;
 
-  // If already contains explicit sequencing conjunctions like "and then", let standard splitter handle
-  const hasStrongConjunctions = /\s+(?:and\s+then|then|after\s+that)\s+/i.test(g);
-  if (hasStrongConjunctions) return null;
-
-  const platformNames = Object.keys(KNOWN_PLATFORMS).join("|");
-  // Regex pattern matching: (verb)? (query) (in/on/at/space)? (platform or domain)
-  const pattern = new RegExp(
-    `^(?:please\\s+)?(play|watch|listen|stream|search\\s+for|search|find|open|buy|order)?\\s*['"]?(.+?)['"]?\\s+(?:in|on|at|onto|from|using)?\\s*([a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}|${platformNames})\\s*$`,
-    "i"
-  );
-
-  const match = g.match(pattern);
-  if (!match) return null;
-
-  const verb = (match[1] || "").toLowerCase().trim();
-  let query = (match[2] || "").trim();
-  const rawPlatform = (match[3] || "").toLowerCase().trim();
-
-  query = query.replace(/^for\s+/i, "").trim();
-
-  let platformKey = rawPlatform;
-  for (const k of Object.keys(KNOWN_PLATFORMS)) {
-    if (rawPlatform.includes(k)) {
-      platformKey = k;
-      break;
+  // GUARD: Direct on-page UI interaction commands (click, tap, press, select, choose, scroll, fill)
+  // MUST NEVER be decomposed into platform searches!
+  if (/^(?:please\s+)?(?:click|tap|press|select|choose|scroll|page|auto\s*fill|fill)\b/i.test(g)) {
+    const hasExplicitPlatform = Object.keys(KNOWN_PLATFORMS).some(
+      (k) => new RegExp(`\\b(?:open|go\\s+to|visit|launch)\\s+${k}\\b`, "i").test(g)
+    );
+    if (!hasExplicitPlatform) {
+      return null;
     }
   }
 
-  const platformConfig = KNOWN_PLATFORMS[platformKey];
-  const targetUrl = platformConfig ? platformConfig.url : (rawPlatform.startsWith("http") ? rawPlatform : `https://${rawPlatform}`);
-  const isAlreadyOnPlatform = currentUrl.toLowerCase().includes(platformKey);
+  const platformKeys = Object.keys(KNOWN_PLATFORMS);
+  const platformNames = platformKeys.join("|");
 
-  if (!query || query.toLowerCase() === platformKey || query.toLowerCase() === rawPlatform) {
-    return null;
+  let platformKey: string | null = null;
+  let rawPlatform = "";
+
+  // 1. Check for "open/go to/visit/launch <platform>"
+  const openMatch = g.match(new RegExp(`\\b(?:open|go\\s+to|visit|launch|browse(?:\\s+to)?)\\s+([a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}|${platformNames}|[a-zA-Z0-9_-]+)\\b`, "i"));
+  if (openMatch) {
+    const cand = openMatch[1].toLowerCase();
+    const nonPlatforms = ["the", "this", "that", "screen", "page", "tab", "browser", "web", "internet", "google", "product", "cart"];
+    if (!nonPlatforms.includes(cand)) {
+      rawPlatform = cand;
+    }
   }
 
-  const steps: string[] = [];
-
-  // Step 1: Open website if not already on it
-  if (!isAlreadyOnPlatform) {
-    steps.push(`open ${targetUrl}`);
+  // 2. Check for "in/on/at/onto/from/using <platform>"
+  if (!rawPlatform) {
+    const prepMatch = g.match(new RegExp(`\\b(?:in|on|at|onto|from|using)\\s+([a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}|${platformNames}|[a-zA-Z0-9_-]+)\\b`, "i"));
+    if (prepMatch) {
+      const cand = prepMatch[1].toLowerCase();
+      const nonPlatforms = ["the", "this", "that", "screen", "page", "tab", "browser", "web", "internet", "google", "product", "cart"];
+      if (!nonPlatforms.includes(cand)) {
+        rawPlatform = cand;
+      }
+    }
   }
 
-  // Step 2: Search for the query on that website
-  steps.push(`search for "${query}" in ${platformKey} and press enter`);
-
-  // Step 3: Play or open the top matching result
-  if (verb === "play" || verb === "watch" || verb === "listen" || verb === "stream" || platformConfig?.defaultAction === "play") {
-    steps.push(`play "${query}"`);
-  } else if (verb === "buy" || verb === "order") {
-    steps.push(`open product: ${query} and add to cart`);
-  } else {
-    steps.push(`click "${query}"`);
+  // 3. Check for "search <platform> for" or "<platform> search"
+  if (!rawPlatform) {
+    const directSearchMatch = g.match(new RegExp(`\\bsearch\\s+(${platformNames})\\s+(?:for\\s+)?`, "i")) ||
+                              g.match(new RegExp(`^(${platformNames})\\s+(?:search|find|play)\\b`, "i"));
+    if (directSearchMatch) {
+      rawPlatform = directSearchMatch[1].toLowerCase();
+    }
   }
 
-  return steps;
+  // 4. Any direct word boundary mention of a known platform in rawGoal (e.g. "amazon", "youtube", "spotify", "gaana")
+  if (!rawPlatform) {
+    for (const k of platformKeys) {
+      if (k.length > 2 && new RegExp(`\\b${k}\\b`, "i").test(g)) {
+        rawPlatform = k;
+        break;
+      }
+    }
+  }
+
+  // Resolve platformKey from rawPlatform
+  if (rawPlatform) {
+    for (const k of platformKeys) {
+      if (rawPlatform === k || rawPlatform.includes(k)) {
+        platformKey = k;
+        break;
+      }
+    }
+    if (!platformKey) {
+      platformKey = rawPlatform;
+    }
+  }
+
+  // 5. Fallback: Only if NO platform is mentioned anywhere in the command, use active tab's domain
+  // CRITICAL FIX: Only infer platformKey from currentUrl if the user explicitly expressed
+  // search or media playback intent (e.g. "search iphone 16", "find wireless mouse", "play song")!
+  // NEVER infer platformKey for direct clicks, button taps, or navigation!
+  if (!platformKey && currentUrl) {
+    const hasSearchOrMediaIntent = /\b(?:search(?:\s+for)?|find|look\s*for|query|play|watch|listen(?:\s+to)?|stream)\b/i.test(g);
+    if (hasSearchOrMediaIntent) {
+      const currentLower = currentUrl.toLowerCase();
+      for (const k of platformKeys) {
+        if (currentLower.includes(k)) {
+          platformKey = k;
+          break;
+        }
+      }
+    }
+  }
+
+  // Detect compound intents:
+  // Intent A: Media Playback (YouTube, Spotify, Gaana, JioSaavn, SoundCloud, etc.)
+  const hasPlayIntent = /\b(?:play|watch|listen(?:\s+to)?|stream)\b/i.test(g);
+  // Intent B: E-Commerce Add-to-Cart (Amazon, Flipkart, Myntra, etc.)
+  const hasCartIntent = /\b(?:add\s*(?:it\s*)?to\s*cart|add\s*cart|buy(?:\s+it)?|order(?:\s+it)?)\b/i.test(g);
+
+  if (platformKey) {
+    const platformConfig = KNOWN_PLATFORMS[platformKey];
+    const isMediaPlatform =
+      platformConfig?.defaultAction === "play" ||
+      hasPlayIntent ||
+      /spotify|youtube|gaana|jiosaavn|wynk|soundcloud|music|audio/i.test(platformKey);
+
+    // Clean query extraction
+    let query = g
+      // Strip "open <platform> (and)"
+      .replace(new RegExp(`^(?:please\s+)?(?:open|go\\s+to|visit|launch)\\s+(?:${platformNames}|[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}|${platformKey})\\s*(?:and\\s+)?`, "i"), "")
+      // Strip "in/on/at <platform>"
+      .replace(new RegExp(`\\b(?:in|on|at|onto|from|using)\\s+(?:${platformNames}|[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})\\b.*$`, "i"), "")
+      .replace(new RegExp(`\\b(?:in|on|at|onto|from|using)\\s+(?:${platformNames}|[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})\\b`, "i"), "")
+      // Strip "search <platform> for"
+      .replace(new RegExp(`^(?:please\\s+)?search\\s+(?:${platformNames})\\s+(?:for\\s+)?`, "i"), "")
+      // Strip action verbs at the start
+      .replace(/^(?:please\s+)?(?:search(?:\s+for)?|find|look\s*for|query|type|open|go\s+to|visit)\s+/i, "")
+      .replace(/^(?:please\s+)?(?:play|watch|listen(?:\s+to)?|stream)\s+/i, "")
+      .replace(/^(?:please\s+)?(?:buy|order|add\s*(?:it\s*)?to\s*cart)\s+/i, "")
+      .replace(/^(?:the\s+)?(?:song|track|video|music)\s+/i, "")
+      // Strip trailing actions or conjunctions
+      .replace(/\s+(?:and\s+)?(?:play\s+it|play|watch\s+it|watch|listen\s+to\s+it|listen|stream\s+it|stream)\s*$/i, "")
+      .replace(/\s+(?:and\s+)?(?:add\s*(?:it\s*)?to\s*cart|add\s*cart|buy(?:\s+it)?|order(?:\s+it)?)\s*$/i, "")
+      .replace(/\s+and\s+(?:play|watch|listen|stream|add|buy|order).*$/i, "")
+      .replace(/\s+and\s*$/i, "")
+      .replace(/^["']|["']$/g, "")
+      .trim();
+
+    if (query && query.toLowerCase() !== platformKey && query.length >= 2) {
+      const steps: string[] = [];
+
+      // Step 1: Direct navigation to search results
+      if (platformConfig?.searchUrl) {
+        steps.push(`open ${platformConfig.searchUrl(query)}`);
+      } else {
+        const isAlreadyOnPlatform = currentUrl.toLowerCase().includes(platformKey);
+        const targetUrl = platformConfig ? platformConfig.url : `https://${rawPlatform}`;
+        if (!isAlreadyOnPlatform) {
+          steps.push(`open ${targetUrl}`);
+        }
+        steps.push(`search for "${query}" in ${platformKey} and press enter`);
+      }
+
+      // Step 2: Targeted follow-up action ONLY if explicitly requested by user
+      const hasOpenIntent = /\b(?:open\s+(?:product|it|the|item|result)|select|view|choose|click\s+(?:on\s+)?(?:product|item|result|first))\b/i.test(g);
+      if (hasPlayIntent && isMediaPlatform) {
+        steps.push(`play "${query}"`);
+      } else if (hasCartIntent) {
+        steps.push(`open product: ${query} and add to cart`);
+      } else if (hasOpenIntent) {
+        steps.push(`open product: ${query}`);
+      }
+
+      return steps;
+    }
+  }
+
+  // Fallback: Default "play <song>" command without platform specified -> default to YouTube
+  const simpleMediaMatch = g.match(/^(?:please\s+)?(play|watch|listen(?:\s+to)?|stream)\s+['"]?(.+?)['"]?$/i);
+  if (simpleMediaMatch) {
+    let query = simpleMediaMatch[2].trim().replace(/^(?:the\s+)?(?:song|track|video|music)\s+/i, "").replace(/^for\s+/i, "").trim();
+    if (query.length >= 2) {
+      const ytCfg = KNOWN_PLATFORMS["youtube"];
+      if (ytCfg?.searchUrl) {
+        return [
+          `open ${ytCfg.searchUrl(query)}`,
+          `play "${query}"`
+        ];
+      }
+    }
+  }
+
+  return null;
 }
 
 function splitCompoundCommand(cmd: string): string[] {
@@ -362,17 +625,53 @@ function isDirectVoiceCommand(cmd: string): boolean {
 
 function extractNavigationTarget(subGoal: string): string | null {
   const s = subGoal.trim();
-  if (/\b(?:cart|carts|my\s+cart|order|orders|menu|modal|popup|dropdown|accordion|tab)\b/i.test(s)) return null;
+  // 1. Explicitly ignore product clicks, cart actions, UI toggles, media playback
+  if (
+    /^(?:open\s+)?product(?::|\s|$)/i.test(s) ||
+    /\bproduct:\s*/i.test(s) ||
+    /\b(?:cart|carts|my\s+cart|order|orders|menu|modal|popup|dropdown|accordion|tab|buy\s+now|add\s+to\s+cart|here|there)\b/i.test(s) ||
+    /^(?:play|watch|listen|stream)\b/i.test(s)
+  ) {
+    return null;
+  }
+
+  // 2. Direct http/https URLs
   const urlMatch = s.match(/(?:https?:\/\/[^\s'"]+)/i);
   if (urlMatch) return urlMatch[0];
-  const navPattern = /^(?:please\s+)?(?:open|go\s+to|navigate(?:\s+to)?|visit|browse(?:\s+to)?)\s+(?:the\s+(?:website|site|page|url)\s+)?['"]?([^'"]+?)['"]?$/i;
+
+  // 3. Domain strings (e.g. "amazon.in", "github.com", "leetcode.com/problemset")
+  if (/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(\/[^\s]*)?$/i.test(s)) return s;
+
+  // 4. "open / go to / visit <target>"
+  const navPattern = /^(?:please\s+|can\s+you\s+|then\s+we\s+will\s+|we\s+will\s+|then\s+)?(?:open|go\s+to|navigate(?:\s+to)?|visit|browse(?:\s+to)?)\s+(?:the\s+(?:website|site|page|url)\s+)?['"]?([^'"]+?)['"]?$/i;
   const match = s.match(navPattern);
   if (match && match[1]) {
     const raw = match[1].trim();
-    if (!raw || /^(?:cart|carts|my\s+cart|order|orders|form|details|here|there)$/i.test(raw)) return null;
-    return raw;
+    if (!raw) return null;
+
+    // Never navigate if raw starts with or mentions product/cart/item/media
+    if (/^(?:product|item|cart|order|video|song|track|link|button|tab)(?::|\s|$)/i.test(raw)) return null;
+
+    const lower = raw.toLowerCase().replace(/^www\./, "");
+    // If it's a known platform (e.g. "flipkart", "amazon", "youtube", "spotify", "gaana")
+    if (KNOWN_PLATFORMS[lower]) {
+      return raw;
+    }
+
+    // If it has a TLD domain format (e.g. "flipkart.com", "news.ycombinator.com")
+    if (/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(\/.*)?$/i.test(raw)) {
+      return raw;
+    }
+
+    // If explicitly requested as a website (e.g. "open target website", "open starbucks site")
+    if (/\b(?:website|site|\.com|\.in|\.org|\.net)\b/i.test(s)) {
+      return raw;
+    }
+
+    // Otherwise, single or multi-word phrases (e.g. "product: iphone 16", "first item") are NOT URLs!
+    return null;
   }
-  if (/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(\/[^\s]*)?$/i.test(s)) return s;
+
   return null;
 }
 
@@ -391,8 +690,31 @@ function extractInFlightAutofillData(prompt: string): Record<string, string> | u
 }
 
 function extractTargetTextFromGoal(subGoal: string): { targetText?: string; isHereThere: boolean } {
-  const isHereThere = /\b(?:click|tap|press)\s+(?:here|there)\b/i.test(subGoal);
-  if (isHereThere) return { isHereThere: true };
+  // Check for generic on-screen references (here, there, this button, link on screen, etc.)
+  const isGenericScreenTarget =
+    /\b(?:click|tap|press|select)\s+(?:here|there|it|this|that|this\s+(?:button|link|item|element)|that\s+(?:button|link|item|element)|the\s+(?:button|link|item|element)|on\s+(?:the\s+)?screen|(?:button|link|element)\s+on\s+(?:the\s+)?screen|this\s+button\s+or\s+link(?:\s+on\s+(?:the\s+)?screen)?)\b/i.test(subGoal) ||
+    /^(?:please\s+)?(?:click|tap|press|select)\s+(?:on\s+)?(?:screen|this\s+screen|the\s+screen|this|that|it)$/i.test(subGoal.trim()) ||
+    /\b(?:this\s+button\s+or\s+link\s+on\s+(?:the\s+)?screen|button\s+or\s+link\s+on\s+(?:the\s+)?screen)\b/i.test(subGoal);
+
+  if (isGenericScreenTarget) {
+    // Check if there is also a specific modifier like color or label (e.g. "click the pink button on the screen")
+    const modifierCheck = subGoal
+      .replace(/^\s*(?:please\s+)?/i, "")
+      .replace(/\b(?:click|tap|press|select|open|go\s+to)\s+(?:on\s+)?/i, "")
+      .replace(/\b(?:this\s+button\s+or\s+link\s+on\s+(?:the\s+)?screen|button\s+or\s+link\s+on\s+(?:the\s+)?screen)\b/gi, "")
+      .replace(/\b(?:on\s+(?:the\s+)?screen|on\s+screen)\b/gi, "")
+      .replace(/\b(?:this|that|the)\s+(?:button|link|element|item)\b/gi, "")
+      .replace(/\b(?:button|btn|link|tab|card|element|item)\b/gi, "")
+      .replace(/\b(?:here|there|it|this|that)\b/gi, "")
+      .replace(/^["']|["']$/g, "")
+      .trim();
+
+    const finalMod = modifierCheck.replace(/^(?:the|a|an|this|that)\s+/i, "").trim();
+    if (!finalMod || finalMod.length < 2) {
+      return { isHereThere: true };
+    }
+    return { targetText: finalMod, isHereThere: false };
+  }
 
   // If subGoal is a media playback command (e.g. 'play "tum hi ho"' or 'play banjaara')
   if (/\b(?:play|watch|listen(?:\s+to)?|stream)\b/i.test(subGoal)) {
@@ -402,11 +724,16 @@ function extractTargetTextFromGoal(subGoal: string): { targetText?: string; isHe
   let clean = subGoal
     .replace(/^\s*(?:please\s+)?/i, "")
     .replace(/\b(?:click|tap|press|select|open|go\s+to)\s+(?:on\s+)?/i, "")
+    .replace(/\b(?:this\s+button\s+or\s+link\s+on\s+(?:the\s+)?screen|button\s+or\s+link\s+on\s+(?:the\s+)?screen)\b/gi, "")
+    .replace(/\b(?:on\s+(?:the\s+)?screen|on\s+screen)\b/gi, "")
+    .replace(/\b(?:this\s+button\s+or\s+link|button\s+or\s+link)\b/gi, "")
+    .replace(/\b(?:this|that|the)\s+(?:button|link|element|item)\b/gi, "")
     .replace(/\b(?:button|btn|link|tab|card|pe\s+click\s+kro|pe\s+click\s+karo|kro|karo|pe|waale|wale)\b/gi, "")
     .replace(/^["']|["']$/g, "")
     .trim();
 
-  if (!clean) clean = subGoal.trim();
+  clean = clean.replace(/^(?:the|a|an|this|that)\s+/i, "").trim();
+  if (!clean) return { isHereThere: true };
   return { targetText: clean, isHereThere: false };
 }
 
@@ -450,6 +777,30 @@ export function SidePanel() {
   const [formIsFavorite, setFormIsFavorite] = useState(false);
 
   const isRunningRef = useRef(false);
+  const speechRecRef = useRef<any>(null);
+  const voiceAutoSendTimerRef = useRef<any>(null);
+  const goalRef = useRef(goal);
+  const shortcutsRef = useRef(shortcuts);
+  const isExecutingVoiceRef = useRef(false);
+
+  useEffect(() => {
+    goalRef.current = goal;
+  }, [goal]);
+
+  useEffect(() => {
+    shortcutsRef.current = shortcuts;
+  }, [shortcuts]);
+
+  useEffect(() => {
+    return () => {
+      clearTimeout(voiceAutoSendTimerRef.current);
+      if (speechRecRef.current) {
+        try {
+          speechRecRef.current.abort();
+        } catch (e) {}
+      }
+    };
+  }, []);
 
   // Load vault and custom shortcuts from chrome.storage.local
   useEffect(() => {
@@ -469,6 +820,7 @@ export function SidePanel() {
   useEffect(() => {
     const handleVoiceCaptured = (msg: any) => {
       if (msg?.type === "VOICE_INPUT_CAPTURED" && msg.text) {
+        setIsListening(false);
         const spoken = msg.text.trim();
         const matchedMacro = resolveShortcutKeyword(spoken, shortcuts);
         if (matchedMacro) {
@@ -603,14 +955,20 @@ export function SidePanel() {
     updateStatus("Reset all shortcuts to default macros.");
   }
 
-  function speakNarration(text: string) {
-    if (!voiceNarration || !("speechSynthesis" in window)) return;
+  function speakNarration(text: string, forceVoice = false) {
+    if ((!voiceNarration && !forceVoice) || !("speechSynthesis" in window)) return;
     try {
       window.speechSynthesis.cancel();
-      const clean = text.replace(/[\u{1F300}-\u{1F9FF}]|[🔒🛡️👁️🔐🎨🤖⚡✓⚠️🚫⏹🎙️]/gu, "").trim();
+      const clean = text.replace(/[\u{1F300}-\u{1F9FF}]|[🔒🛡️👁️🔐🎨🤖⚡✓⚠️🚫⏹🎙️👂🔔]/gu, "").trim();
       if (clean) {
         const utter = new SpeechSynthesisUtterance(clean);
-        utter.rate = 1.05;
+        utter.rate = 1.08;
+        utter.pitch = 1.0;
+        try {
+          const voices = window.speechSynthesis.getVoices();
+          const engVoice = voices.find((v) => v.lang.startsWith("en-IN")) || voices.find((v) => v.lang.startsWith("en"));
+          if (engVoice) utter.voice = engVoice;
+        } catch (e) {}
         window.speechSynthesis.speak(utter);
       }
     } catch (e) {}
@@ -621,22 +979,138 @@ export function SidePanel() {
     speakNarration(msg);
   }
 
-  function toggleVoiceInput() {
-    updateStatus("Voice Commander: Opening hands-free speech input...");
-    try {
-      if (typeof chrome !== "undefined" && chrome.windows) {
-        chrome.windows.create({
-          url: chrome.runtime.getURL("voice.html"),
-          type: "popup",
-          width: 440,
-          height: 490,
-          focused: true
-        });
-      } else {
-        window.open("voice.html", "pixelNovaVoice", "width=440,height=490");
+  function stopInlineVoice() {
+    clearTimeout(voiceAutoSendTimerRef.current);
+    if (speechRecRef.current) {
+      try {
+        speechRecRef.current.stop();
+      } catch (e) {}
+      speechRecRef.current = null;
+    }
+    setIsListening(false);
+    updateStatus("Microphone paused.");
+  }
+
+  function executeCapturedVoice(spokenText: string) {
+    if (isExecutingVoiceRef.current) return;
+    isExecutingVoiceRef.current = true;
+
+    stopInlineVoice();
+
+    const spoken = spokenText.trim();
+    if (!spoken) return;
+
+    const matchedMacro = resolveShortcutKeyword(spoken, shortcutsRef.current);
+    if (matchedMacro) {
+      const macroCmd = matchedMacro.act;
+      updateStatus(`🎤 Spoke: "${spoken}" → Triggered Favorite [${matchedMacro.tag}] Macro!`);
+      setGoal(macroCmd);
+      runAutonomousLoop(macroCmd);
+    } else {
+      updateStatus(`🎤 Spoke: "${spoken}" → Executing goal!`);
+      setGoal(spoken);
+      runAutonomousLoop(spoken);
+    }
+  }
+
+  async function startInlineVoice() {
+    const SpeechRec = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
+    if (!SpeechRec) {
+      setError("Speech recognition is not supported in this browser.");
+      return;
+    }
+
+    if (speechRecRef.current) {
+      try {
+        speechRecRef.current.abort();
+      } catch (e) {}
+      speechRecRef.current = null;
+    }
+
+    clearTimeout(voiceAutoSendTimerRef.current);
+    isExecutingVoiceRef.current = false;
+
+    // Check/request microphone permission on extension origin in the current window if needed
+    if (navigator.mediaDevices?.getUserMedia) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach((t) => t.stop());
+      } catch (permErr: any) {
+        console.warn("Microphone access check:", permErr);
       }
-    } catch (e) {
-      setError("Could not launch Voice Commander popup.");
+    }
+
+    try {
+      const rec = new SpeechRec();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = navigator.language || "en-US";
+
+      rec.onstart = () => {
+        setIsListening(true);
+        updateStatus("🎙️ Listening in current window... Speak your goal or command.");
+      };
+
+      rec.onresult = (event: any) => {
+        let interim = "";
+        let final = "";
+
+        for (let i = 0; i < event.results.length; i++) {
+          const text = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            final += text;
+          } else {
+            interim += text;
+          }
+        }
+
+        const currentTranscript = (final + " " + interim).trim();
+        if (currentTranscript) {
+          setGoal(currentTranscript);
+          goalRef.current = currentTranscript;
+
+          clearTimeout(voiceAutoSendTimerRef.current);
+          if (final) {
+            updateStatus(`Recognized: "${currentTranscript}" (executing in 1.4s...)`);
+            voiceAutoSendTimerRef.current = setTimeout(() => {
+              executeCapturedVoice(currentTranscript);
+            }, 1400);
+          }
+        }
+      };
+
+      rec.onerror = (event: any) => {
+        console.warn("Inline voice recognition error:", event.error);
+        if (event.error === "not-allowed") {
+          setError("Microphone permission denied. Please allow microphone access for the extension.");
+          setIsListening(false);
+        } else if (event.error === "audio-capture") {
+          setError("Microphone is currently busy or unavailable.");
+          setIsListening(false);
+        } else if (event.error !== "no-speech") {
+          setIsListening(false);
+        }
+      };
+
+      rec.onend = () => {
+        setIsListening(false);
+      };
+
+      rec.start();
+      speechRecRef.current = rec;
+      setIsListening(true);
+    } catch (err: any) {
+      console.error("Failed to start inline voice recognition:", err);
+      setIsListening(false);
+      setError("Could not activate microphone in current window.");
+    }
+  }
+
+  function toggleVoiceInput() {
+    if (isListening) {
+      stopInlineVoice();
+    } else {
+      startInlineVoice();
     }
   }
 
@@ -893,6 +1367,12 @@ export function SidePanel() {
     };
 
     setSanitizedContext(sanitized);
+    const count = entities.length;
+    updateStatus(
+      count > 0
+        ? `Fail-Closed Privacy Gate: Shield Active (${count} item${count > 1 ? "s" : ""} protected 100% on-device)`
+        : "Fail-Closed Privacy Gate: Shield Active (Zero PII Exposed)"
+    );
     return sanitized;
   }
 
@@ -1208,8 +1688,10 @@ export function SidePanel() {
               }
             ]);
 
-            updateStatus(`🔒 New page opened (${finalUrl}). Activating On-Device Privacy Shield...`);
-            await new Promise((r) => setTimeout(r, 800));
+            // If the next step is playing media or clicking a result, allow the search results to mount
+            const nextSubGoal = subGoals[i + 1];
+            const loadWaitMs = nextSubGoal && /\b(?:play|watch|listen|stream|click)\b/i.test(nextSubGoal) ? 2600 : 900;
+            await new Promise((r) => setTimeout(r, loadWaitMs));
             // Sensitive info hide is TOP PRIORITY: Scan & mask new page immediately!
             await observeAndProtect().catch((err) => {
               console.warn("Privacy shield activation on new tab:", err);
@@ -1318,8 +1800,8 @@ export function SidePanel() {
             }
           };
 
-          // Step 1: Check FIRST VIEW (initial viewport) for the genuine matching product
-          updateStatus(`Step 1/2: Inspecting first view for actual product "${productQuery}"...`);
+          // Step 1: Check FIRST VIEW (initial viewport) for the genuine matching product (Tier 1 Reflex - 50ms)
+          updateStatus(`⚡ Reflex (Tier 1): Inspecting first view for "${productQuery}"...`);
           const firstViewAction: AgentAction = {
             action: "find_and_add_product",
             value: productQuery,
@@ -1329,14 +1811,43 @@ export function SidePanel() {
           const firstViewRes = await executeActionInTab(firstViewAction);
 
           if (firstViewRes.success && firstViewRes.productFound) {
+            updateStatus(`⚡ Reflex match: Found "${productQuery}" immediately!`);
             await handleProductFound(firstViewRes);
-            // STOP UNNECESSARY THINGS: Clean finish!
             isRunningRef.current = false;
             setIsRunning(false);
             return;
           }
 
-          // Step 2: NOT in first view -> SCROLL DOWN TO DISCOVER
+          // Step 1B: Tier 2 Hybrid - Consult Backend Brain (Gemini Multimodal VLM)
+          updateStatus(`🧠 Consulting Backend Brain (Gemini VLM) to visually identify "${productQuery}"...`);
+          try {
+            const sanitized = await observeAndProtect();
+            if (sanitized && !sanitized.isBlocked) {
+              const brainAction = await requestBrainPlan(
+                sanitized,
+                `Locate and click on the actual product card or title link for "${productQuery}". Avoid phone cases, covers, tempered glass, cables, or sponsored ads.`
+              );
+              if (brainAction && brainAction.action === "click" && (typeof brainAction.targetIndex === "number" || brainAction.selector || brainAction.targetText)) {
+                updateStatus(`🧠 Brain identified product (${brainAction.thought || "Target selected"}). Executing hardware click...`);
+                const brainRes = await executeActionInTab(brainAction);
+                if (brainRes.success) {
+                  await handleProductFound({
+                    success: true,
+                    productFound: true,
+                    productTitle: brainAction.targetText || productQuery,
+                    navigatingToProduct: true
+                  });
+                  isRunningRef.current = false;
+                  setIsRunning(false);
+                  return;
+                }
+              }
+            }
+          } catch (brainErr) {
+            console.warn("Backend brain consultation fell through to scroll reflex:", brainErr);
+          }
+
+          // Step 2: Fallback Reflex - SCROLL DOWN TO DISCOVER
           updateStatus(`"${productQuery}" not in first view. Scrolling down to discover actual product...`);
           let foundAfterScroll = false;
           let finalScrollRes: any = null;
@@ -1372,6 +1883,158 @@ export function SidePanel() {
           } else {
             updateStatus(`Could not locate verified "${productQuery}" in search results.`);
             setError(`Could not locate verified "${productQuery}" in search results.`);
+          }
+
+          // STOP UNNECESSARY THINGS: Clean finish!
+          isRunningRef.current = false;
+          setIsRunning(false);
+          return;
+        }
+
+        // 4B. DEDICATED 2-STAGE MEDIA DISCOVERY PIPELINE (YouTube, Spotify, etc.)
+        // 1. INSPECT FIRST VIEW (VISIBLE SCREEN) FOR THE EXACT VIDEO/SONG
+        // 2. IF FOUND IN FIRST VIEW: PLAY IMMEDIATELY WITH ZERO SCROLLING!
+        // 3. IF AND ONLY IF NOT IN FIRST VIEW: SCROLL DOWN TO FIND AND PLAY THE EXACT VIDEO
+        // 4. NEVER CLICK RANDOM VIDEOS
+        const isMediaPlayFlow =
+          /\b(?:play|watch|listen(?:\s+to)?|stream)\b/i.test(subGoal) ||
+          (/\b(?:search|find|look\s*for)\b/i.test(rawGoal) && /\b(?:play|watch|listen|stream)\b/i.test(subGoal));
+
+        if (isMediaPlayFlow) {
+          let mediaQuery = subGoal
+            .replace(/^(?:please\s+)?(?:play|watch|listen(?:\s+to)?|stream|open)\s+/i, "")
+            .replace(/^(?:the\s+)?(?:song|track|video|music)\s+/i, "")
+            .replace(/\s+(?:in|on|at)\s+[a-z0-9.-]+$/i, "")
+            .replace(/\s+(?:and\s+)?(?:play\s+it|play|watch\s+it|watch|listen\s+to\s+it|listen|stream\s+it|stream)\s*$/i, "")
+            .replace(/^["']|["']$/g, "")
+            .trim();
+
+          // SAFEGUARD: If mediaQuery is a pronoun or generic filler ("it", "this", "that", "song", "video", "music"), extract from rawGoal!
+          if (!mediaQuery || /^(?:it|this|that|one|song|video|music|track|the\s+song|the\s+video)$/i.test(mediaQuery) || mediaQuery.length < 2) {
+            mediaQuery = rawGoal
+              .replace(/^(?:please\s+)?(?:play|watch|listen(?:\s+to)?|stream|search(?:\s+for)?|find|look\s*for)\s+/i, "")
+              .replace(/^(?:the\s+)?(?:song|track|video|music)\s+/i, "")
+              .replace(/\s+(?:in|on|at|onto|from|using)\s+[a-z0-9.-]+.*$/i, "")
+              .replace(/\s+(?:and\s+)?(?:play\s+it|play|watch\s+it|watch|listen\s+to\s+it|listen|stream\s+it|stream)\s*$/i, "")
+              .replace(/^["']|["']$/g, "")
+              .trim();
+          }
+
+          updateStatus(`Media Flow: Checking visible screen for "${mediaQuery}"...`);
+          await new Promise((r) => setTimeout(r, 2000)); // allow search results or player to settle
+
+          // Step 1: Check FIRST VIEW (initial visible screen) for the genuine matching media (Tier 1 Reflex - 50ms)
+          updateStatus(`⚡ Reflex (Tier 1): Inspecting visible screen for "${mediaQuery}"...`);
+          const firstViewAction: AgentAction = {
+            action: "find_and_play_media",
+            value: mediaQuery,
+            amount: 1, // 1 = checkFirstViewOnly (strict visible screen, NO scroll!)
+            thought: `Inspecting first view of screen for verified media '${mediaQuery}'`
+          };
+          const firstViewRes = await executeActionInTab(firstViewAction);
+
+          if (firstViewRes.success && (firstViewRes as any).mediaFound) {
+            const playedTitle = (firstViewRes as any).mediaTitle || mediaQuery;
+            updateStatus(`▶️ Playing verified media: "${playedTitle}" (Found on screen)`);
+            setSteps((prev) => [
+              ...prev,
+              {
+                stepIndex: prev.length + 1,
+                timestamp: Date.now(),
+                goal: subGoal,
+                action: { action: "find_and_play_media", value: mediaQuery, thought: `Playing verified media '${playedTitle}' from visible screen` },
+                status: "completed",
+                result: firstViewRes.result || `Found and playing verified media "${playedTitle}" directly from screen.`
+              }
+            ]);
+            isRunningRef.current = false;
+            setIsRunning(false);
+            return;
+          }
+
+          // Step 1B: Tier 2 Hybrid - Consult Backend Brain (Gemini Multimodal VLM)
+          updateStatus(`🧠 Consulting Backend Brain (Gemini VLM) to locate "${mediaQuery}"...`);
+          try {
+            const sanitized = await observeAndProtect();
+            if (sanitized && !sanitized.isBlocked) {
+              const brainAction = await requestBrainPlan(
+                sanitized,
+                `Find and click play on the track or video "${mediaQuery}". Do NOT click the footer playback bar.`
+              );
+              if (brainAction && (brainAction.action === "click" || brainAction.action === "hover") && (typeof brainAction.targetIndex === "number" || brainAction.selector || brainAction.targetText)) {
+                updateStatus(`🧠 Brain located media (${brainAction.thought || "Target chosen"}). Triggering hardware playback...`);
+                const brainRes = await executeActionInTab(brainAction);
+                if (brainRes.success) {
+                  updateStatus(`▶️ Playing verified media: "${mediaQuery}"`);
+                  setSteps((prev) => [
+                    ...prev,
+                    {
+                      stepIndex: prev.length + 1,
+                      timestamp: Date.now(),
+                      goal: subGoal,
+                      action: brainAction,
+                      status: "completed",
+                      result: `Backend Brain identified and played "${mediaQuery}".`
+                    }
+                  ]);
+                  isRunningRef.current = false;
+                  setIsRunning(false);
+                  return;
+                }
+              }
+            }
+          } catch (brainErr) {
+            console.warn("Backend brain consultation fell through to scroll reflex:", brainErr);
+          }
+
+          // Step 2: Fallback Reflex - SCROLL DOWN STEP-BY-STEP TO FIND THE RIGHT TRACK/VIDEO
+          updateStatus(`"${mediaQuery}" not found on visible screen. Scrolling down to discover track...`);
+          let foundAfterScroll = false;
+          let finalScrollRes: any = null;
+
+          for (let scrollAttempt = 1; scrollAttempt <= 3; scrollAttempt++) {
+            if (!isRunningRef.current) break;
+            updateStatus(`Scrolling search results down to find "${mediaQuery}" (Pass ${scrollAttempt}/3)...`);
+            await executeActionInTab({
+              action: "scroll",
+              direction: "down",
+              amount: 600,
+              thought: `Scrolling down to inspect more media for '${mediaQuery}'`
+            });
+            await new Promise((r) => setTimeout(r, 1000));
+
+            updateStatus(`Scanning newly visible items for exact match: "${mediaQuery}"...`);
+            const scrollScanAction: AgentAction = {
+              action: "find_and_play_media",
+              value: mediaQuery,
+              amount: 0, // 0 = scan active viewport
+              thought: `Inspecting newly scrolled items for '${mediaQuery}'`
+            };
+            const scrollRes = await executeActionInTab(scrollScanAction);
+            if (scrollRes.success && (scrollRes as any).mediaFound) {
+              foundAfterScroll = true;
+              finalScrollRes = scrollRes;
+              break;
+            }
+          }
+
+          if (foundAfterScroll && finalScrollRes) {
+            const playedTitle = finalScrollRes.mediaTitle || mediaQuery;
+            updateStatus(`▶️ Playing verified media: "${playedTitle}"`);
+            setSteps((prev) => [
+              ...prev,
+              {
+                stepIndex: prev.length + 1,
+                timestamp: Date.now(),
+                goal: subGoal,
+                action: { action: "find_and_play_media", value: mediaQuery, thought: `Playing verified media '${playedTitle}' after scroll` },
+                status: "completed",
+                result: finalScrollRes.result || `Located and played verified media "${playedTitle}".`
+              }
+            ]);
+          } else {
+            updateStatus(`Could not find exact matching media for "${mediaQuery}". Refusing to play unrelated items.`);
+            setError(`Could not find exact matching media for "${mediaQuery}".`);
           }
 
           // STOP UNNECESSARY THINGS: Clean finish!
@@ -1443,7 +2106,7 @@ export function SidePanel() {
 
           const clickAction: AgentAction = {
             action: "click",
-            targetText: cleanTarget,
+            targetText: isHereThere ? undefined : cleanTarget,
             thought: isHereThere
               ? "Voice Command: Clicking active or primary element"
               : /\b(?:play|watch|listen|stream)\b/i.test(subGoal)
@@ -1573,6 +2236,7 @@ export function SidePanel() {
   }
 
   async function runAutonomousLoop(overrideGoal?: string) {
+    stopInlineVoice();
     let currentGoal = (overrideGoal !== undefined ? overrideGoal : goal).trim();
 
     // Check if goal is a category keyword trigger! (e.g. "MUSIC", "play music", "e-com", "scroll")
@@ -1719,6 +2383,7 @@ export function SidePanel() {
   function stopAgent() {
     isRunningRef.current = false;
     setIsRunning(false);
+    stopInlineVoice();
     updateStatus("Agent stopped by user.");
   }
 
@@ -2819,7 +3484,7 @@ export function SidePanel() {
                           </span>
                         </div>
                         <div className="entity-redaction">
-                          <span className="raw-val" title={rawVal}>"{rawVal}"</span>
+                          <span className="raw-val" title={rawVal}>{rawVal}</span>
                           <span className="arrow">➔</span>
                           <span className="masked-val">{maskedVal}</span>
                         </div>

@@ -5,7 +5,6 @@ const micRing = document.getElementById("mic-ring") as HTMLDivElement;
 const btnMic = document.getElementById("btn-mic-toggle") as HTMLButtonElement;
 const transcriptBox = document.getElementById("transcript-box") as HTMLDivElement;
 const btnSend = document.getElementById("btn-send") as HTMLButtonElement;
-
 const chkAutoRun = document.getElementById("chk-auto-run") as HTMLInputElement;
 
 let recognition: any = null;
@@ -36,11 +35,13 @@ async function initMicrophoneAndListen() {
   try {
     statusDesc.innerText = "Requesting microphone permission...";
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    // Stop raw tracks so speech recognition can bind to device
+    // Stop raw tracks so speech recognition can bind cleanly to audio hardware
     stream.getTracks().forEach((track) => track.stop());
 
     statusDesc.innerText = "Microphone authorized! Ready to listen.";
-    startListening();
+    setTimeout(() => {
+      startListening();
+    }, 150);
   } catch (err: any) {
     console.error("Microphone access error:", err);
     statusDesc.innerText = "Microphone permission was blocked. Please click the lock icon in the address bar to allow microphone access.";
@@ -55,11 +56,18 @@ function startListening() {
     return;
   }
 
+  if (recognition) {
+    try {
+      recognition.abort();
+    } catch (e) {}
+    recognition = null;
+  }
+
   try {
     recognition = new SpeechRec();
     recognition.continuous = true;
     recognition.interimResults = true;
-    recognition.lang = "en-US";
+    recognition.lang = navigator.language || "en-US";
 
     recognition.onstart = () => {
       isRecording = true;
@@ -100,17 +108,24 @@ function startListening() {
 
     recognition.onerror = (event: any) => {
       console.warn("Recognition error:", event.error);
-      if (event.error === "not-allowed") {
-        statusDesc.innerText = "Microphone permission denied.";
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        statusDesc.innerText = "Microphone permission denied. Please check Chrome permissions.";
+      } else if (event.error === "audio-capture") {
+        statusDesc.innerText = "Audio device busy. Reconnecting...";
+        setTimeout(() => {
+          if (isRecording) startListening();
+        }, 800);
       }
     };
 
     recognition.onend = () => {
       if (isRecording) {
-        // Auto-restart if still flagged recording
-        try {
-          recognition.start();
-        } catch (e) {}
+        // Auto-restart with fresh instance after brief debounce
+        setTimeout(() => {
+          if (isRecording) {
+            startListening();
+          }
+        }, 120);
       } else {
         btnMic.classList.remove("active");
         micRing.style.display = "none";
@@ -130,6 +145,7 @@ function stopListening() {
     try {
       recognition.stop();
     } catch (e) {}
+    recognition = null;
   }
   btnMic.classList.remove("active");
   micRing.style.display = "none";

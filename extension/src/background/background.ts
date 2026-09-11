@@ -21,9 +21,21 @@ function normalizeWebUrl(raw: string): string {
   const lower = trimmed.toLowerCase();
   if (lower === "spotify") return "https://open.spotify.com";
   if (lower === "youtube") return "https://www.youtube.com";
+  if (lower === "gaana") return "https://gaana.com";
+  if (lower === "jiosaavn") return "https://www.jiosaavn.com";
+  if (lower === "wynk") return "https://wynk.in/music";
+  if (lower === "soundcloud") return "https://soundcloud.com";
   if (lower === "amazon") return "https://www.amazon.in";
-  if (lower === "google") return "https://www.google.com";
   if (lower === "flipkart") return "https://www.flipkart.com";
+  if (lower === "myntra") return "https://www.myntra.com";
+  if (lower === "meesho") return "https://www.meesho.com";
+  if (lower === "nykaa") return "https://www.nykaa.com";
+  if (lower === "ajio") return "https://www.ajio.com";
+  if (lower === "google") return "https://www.google.com";
+  if (lower === "target") return "https://www.target.com";
+  if (lower === "walmart") return "https://www.walmart.com";
+  if (lower === "bestbuy") return "https://www.bestbuy.com";
+  if (lower === "ebay") return "https://www.ebay.com";
   if (lower === "netflix") return "https://www.netflix.com";
   if (lower === "github") return "https://www.github.com";
   if (lower === "reddit") return "https://www.reddit.com";
@@ -36,6 +48,12 @@ function normalizeWebUrl(raw: string): string {
   if (/^[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+(:\d+)?(\/.*)?$/.test(trimmed)) {
     return `https://${trimmed}`;
   }
+
+  // Universal fallback for single brand words (e.g. "gaana", "myntra", "zepto") without spaces
+  if (/^[a-zA-Z0-9_-]+$/.test(trimmed) && trimmed.length >= 3) {
+    return `https://www.${lower}.com`;
+  }
+
   // Otherwise default to Google Web Search
   return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
 }
@@ -130,6 +148,76 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       } catch (err: any) {
         console.error("Navigation error:", err);
         sendResponse({ success: false, error: err.message || "Failed to navigate" });
+      }
+    })();
+    return true;
+  }
+
+  // Real Hardware-Level Click via Chrome DevTools Protocol (CDP Input.dispatchMouseEvent)
+  // Generates genuine isTrusted: true click events bypassing browser autoplay & React shields
+  if (message?.type === "DISPATCH_REAL_CLICK" || message?.action === "DISPATCH_REAL_CLICK") {
+    (async () => {
+      let tabId = message.tabId || _sender.tab?.id;
+      if (!tabId) {
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        tabId = tabs[0]?.id;
+      }
+      if (!tabId) {
+        sendResponse({ success: false, error: "No active tab for real click" });
+        return;
+      }
+
+      const target = { tabId };
+      try {
+        try {
+          await chrome.debugger.attach(target, "1.3");
+        } catch (attachErr: any) {
+          if (!attachErr?.message?.includes("Already attached")) {
+            throw attachErr;
+          }
+        }
+
+        const x = Math.round(message.x);
+        const y = Math.round(message.y);
+
+        // 1. Move mouse to target coordinates
+        await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
+          type: "mouseMoved",
+          x,
+          y
+        });
+
+        // 2. Press left mouse button
+        await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
+          type: "mousePressed",
+          x,
+          y,
+          button: "left",
+          buttons: 1,
+          clickCount: 1
+        });
+
+        // Realistic click press duration
+        await new Promise((r) => setTimeout(r, 60));
+
+        // 3. Release left mouse button -> Produces genuine isTrusted: true click!
+        await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
+          type: "mouseReleased",
+          x,
+          y,
+          button: "left",
+          buttons: 0,
+          clickCount: 1
+        });
+
+        sendResponse({ success: true, isTrusted: true, x, y });
+      } catch (err: any) {
+        console.error("CDP Real Click error:", err);
+        sendResponse({ success: false, error: err?.message || String(err) });
+      } finally {
+        try {
+          await chrome.debugger.detach(target);
+        } catch (detachErr) {}
       }
     })();
     return true;

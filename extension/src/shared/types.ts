@@ -143,7 +143,8 @@ export type AgentActionType =
   | "hover"
   | "finish"
   | "confirm_action"
-  | "find_and_add_product";
+  | "find_and_add_product"
+  | "find_and_play_media";
 
 export interface AgentAction {
   action: AgentActionType;
