@@ -331,6 +331,28 @@ function findTargetElementSmart(rawTerm: string): HTMLElement | null {
     if (cartEl) return cartEl;
   }
 
+  // Dedicated Video / YouTube Ad Skip Button Resolver
+  if (/\b(?:skip(?:\s+ad)?|skip\s+intro|skip\s+now)\b/i.test(lower)) {
+    const skipSelectors = [
+      ".ytp-skip-ad-button",
+      ".ytp-ad-skip-button-modern",
+      ".ytp-ad-skip-button",
+      ".ytp-ad-skip-button-container button",
+      "button[class*='skip' i]",
+      "[id*='skip-button' i] button",
+      ".videoAdUiSkipButton",
+      "[aria-label*='skip' i]",
+      "button.skip",
+      ".skip-button"
+    ];
+    for (const sel of skipSelectors) {
+      const btn = document.querySelector<HTMLElement>(sel);
+      if (btn && btn.getClientRects().length > 0) {
+        return btn;
+      }
+    }
+  }
+
   // Clean the search term
   let cleanTerm = rawTerm
     .trim()
@@ -1834,20 +1856,23 @@ async function executeAgentAction(
         term.startsWith("watch") ||
         term.startsWith("listen") ||
         term.startsWith("stream") ||
-        window.location.hostname.includes("spotify.com") ||
-        window.location.hostname.includes("youtube.com")
+        (/\b(?:play|watch|listen|stream)\b/i.test(term) && (window.location.hostname.includes("spotify.com") || window.location.hostname.includes("youtube.com")))
       ) {
-        const rawSongOrVideoQuery = term
-          .replace(/^(?:please\s+)?(?:play|watch|listen(?:\s+to)?|stream|open|click)\s+/i, "")
-          .replace(/^(?:the\s+)?(?:song|track|video|music)\s+/i, "")
-          .replace(/^["']|["']$/g, "")
-          .trim()
-          .toLowerCase();
+        // Exclude UI controls like skip, like, subscribe, mute, fullscreen
+        const isPlaybackMediaIntent = !/\b(?:skip|like|subscribe|share|comment|pause|stop|mute|fullscreen|volume)\b/i.test(term);
+        if (isPlaybackMediaIntent) {
+          const rawSongOrVideoQuery = term
+            .replace(/^(?:please\s+)?(?:play|watch|listen(?:\s+to)?|stream|open|click)\s+/i, "")
+            .replace(/^(?:the\s+)?(?:song|track|video|music)\s+/i, "")
+            .replace(/^["']|["']$/g, "")
+            .trim()
+            .toLowerCase();
 
-        const query = rawSongOrVideoQuery || action.value || "";
-        const mediaRes = await findAndPlayVerifiedMedia(query, false);
-        if (mediaRes.success && mediaRes.mediaFound) {
-          return mediaRes;
+          const query = rawSongOrVideoQuery || action.value || "";
+          const mediaRes = await findAndPlayVerifiedMedia(query, false);
+          if (mediaRes.success && mediaRes.mediaFound) {
+            return mediaRes;
+          }
         }
 
         // 3. Generic Audio / Video or Media Player fallback (only if already on media page or explicit play CTA)
