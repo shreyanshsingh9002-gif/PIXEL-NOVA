@@ -145,9 +145,12 @@ export async function redactVisualScreenshot(
         const { x, y, width, height } = entity.boundingBox;
         if (width <= 0 || height <= 0) continue;
 
+        const isFaceOrAvatar = entity.category === "AVATAR" || entity.category === "FACE";
+        const maxH = isFaceOrAvatar ? Math.min(320 * scale, canvas.height * 0.40) : MAX_BOX_HEIGHT;
+
         // Never let a bounding box exceed reasonable single-field PII limits
         const safeW = Math.min(width * scale + 4, MAX_BOX_WIDTH);
-        const safeH = Math.min(height * scale + 4, MAX_BOX_HEIGHT);
+        const safeH = Math.min(height * scale + 4, maxH);
 
         initialBoxes.push({
           x: x * scale - 2,
@@ -165,8 +168,18 @@ export async function redactVisualScreenshot(
       const PADDING_THRESHOLD = 5; // pixels gap to merge closely clustered fields
 
       for (const box of initialBoxes) {
+        // Keep avatar/face as its own distinct blurred bounding box without merging into text lines
+        if (box.categories.has("AVATAR") || box.categories.has("FACE")) {
+          mergedBoxes.push(box);
+          continue;
+        }
+
         let merged = false;
         for (const target of mergedBoxes) {
+          if (target.categories.has("AVATAR") || target.categories.has("FACE")) {
+            continue;
+          }
+
           // Check collision or close proximity
           // Constrain merge to the same text line/row to prevent multi-line screen cascading
           const isSameRow = Math.abs(box.y - target.y) <= 20 * scale;
@@ -202,9 +215,47 @@ export async function redactVisualScreenshot(
         }
       }
 
-      // 4. Render sleek, non-overlapping blackout boxes
+      // 4. Render sleek, non-overlapping blackout boxes and blurred faces
       for (const box of mergedBoxes) {
         const { x: bx, y: by, w: bw, h: bh, categories, hasML } = box;
+
+        // FACE & AVATAR BLURRING FILTER (Explicit SIH Requirement)
+        if (categories.has("AVATAR") || categories.has("FACE")) {
+          ctx.save();
+          ctx.beginPath();
+          const radius = Math.min(8, Math.min(bw / 4, bh / 4));
+          if (typeof ctx.roundRect === "function") {
+            ctx.roundRect(bx, by, bw, bh, radius);
+          } else {
+            ctx.rect(bx, by, bw, bh);
+          }
+          ctx.clip();
+
+          // Apply Gaussian blur on canvas layer
+          ctx.filter = "blur(14px)";
+          ctx.drawImage(img, 0, 0);
+          ctx.filter = "none";
+
+          // Frosted cyber tint over blurred face
+          ctx.fillStyle = "rgba(15, 23, 42, 0.45)";
+          ctx.fill();
+
+          // Cyber Cyan security border
+          ctx.strokeStyle = "#06b6d4";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+
+          // Security badge on blurred face
+          const badgeText = "🔒 [BLURRED: FACE / AVATAR]";
+          const bSize = Math.max(9, Math.min(11, Math.round(10 * scale)));
+          ctx.font = `bold ${bSize}px monospace`;
+          ctx.fillStyle = "#22d3ee";
+          ctx.fillText(badgeText, bx + 6, by + Math.max(14, bh - 6));
+
+          ctx.restore();
+          maskedCount++;
+          continue;
+        }
 
         // Option 1: Frosted Slate & Cyber Emerald (Eye-soothing enterprise privacy seal)
         // Primary theme: Soft emerald security border, calm mint text, frosted dark slate fill

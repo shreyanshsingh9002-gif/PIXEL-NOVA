@@ -1,0 +1,60 @@
+{
+  "manifest_version": 3,
+  "name": "PIXEL NOVA",
+  "version": "0.1.0",
+  "description": "On-Device Visual Perception for Light-weight Browser Agents (ISRO SIH 26171)",
+
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "scripting",
+    "storage"
+  ],
+
+  "host_permissions": [
+    "<all_urls>"
+  ],
+
+  "background": {
+    "scripts": ["background.js"]
+  },
+
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "pixelnova@isro-sih.org",
+      "strict_min_version": "115.0"
+    }
+  },
+
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+
+  "action": {
+    "default_title": "Open PIXEL NOVA",
+    "default_popup": "index.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+
+  "sidebar_action": {
+    "default_title": "PIXEL NOVA Privacy Agent",
+    "default_panel": "index.html",
+    "default_icon": "icons/icon32.png"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

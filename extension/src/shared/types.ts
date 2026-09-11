@@ -58,7 +58,9 @@ export type PIICategory =
   | "MEDICAL"
   | "FINANCIAL"
   | "CONFIDENTIAL"
-  | "LEGAL";
+  | "LEGAL"
+  | "FACE"
+  | "AVATAR";
 
 export type RiskLevel = "LOW" | "MEDIUM" | "HIGH";
 
@@ -102,6 +104,9 @@ export interface LocalVisionResult {
   modelName: string;
   inferenceTimeMs: number;
   elementsDetected: VisualDetectedElement[];
+  onnxSessionReady?: boolean;
+  tensorShape?: string;
+  memoryFootprintMB?: number;
 }
 
 export interface PrivacyTelemetryAudit {
@@ -114,6 +119,11 @@ export interface PrivacyTelemetryAudit {
   executionProvider: string;
   mlSensitivityScore?: number;
   mlModelActive?: string;
+  usedJSHeapMB?: number;
+  totalJSHeapMB?: number;
+  inferenceLatencyMs?: number;
+  hardwareAcceleration?: "WebGPU" | "WASM" | "CPU";
+  resourceGrade?: string;
 }
 
 export interface SanitizedContext {

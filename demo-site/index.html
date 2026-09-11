@@ -28,7 +28,7 @@
   <main class="container">
     <!-- Notice Bar -->
     <div class="demo-banner">
-      <span>🛡️ <strong>PIXEL NOVA Consumer Privacy Environment:</strong> Simulates realistic e-commerce accounts covering 4 Core Pillars: <strong>Government IDs</strong> (Aadhaar, PAN, Passport), <strong>Financial Data</strong> (Cards, CVV, UPI, Bank Details), <strong>Credentials</strong> (Passwords, 2FA OTPs), and <strong>Contact/Location</strong> (Phone, Email, Delivery Address).</span>
+      <span>🛡️ <strong>PIXEL NOVA Consumer Privacy Environment:</strong> Simulates realistic e-commerce accounts covering 5 Core Pillars: <strong>Biometric Faces / Avatars</strong> (Dynamically Blurred), <strong>Government IDs</strong> (Aadhaar, PAN, Passport), <strong>Financial Data</strong> (Cards, CVV, UPI, Bank), <strong>Credentials</strong> (Passwords, 2FA OTPs), and <strong>Contact/Location</strong> (Phone, Email, Delivery Address).</span>
     </div>
 
     <!-- PROFILE TAB -->
@@ -41,6 +41,22 @@
             <span class="badge badge-verified">Verified KYC</span>
           </div>
           <div class="card-body">
+            <!-- Profile Avatar / Face Biometric -->
+            <div style="display: flex; gap: 14px; align-items: center; margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid #e2e8f0;">
+              <img 
+                src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'><rect width='100' height='100' rx='50' fill='%233b82f6'/><circle cx='50' cy='38' r='18' fill='%23fcd34d'/><path d='M22,82 C22,65 34,58 50,58 C66,58 78,65 78,82 Z' fill='%231e293b'/><circle cx='44' cy='36' r='2.5' fill='%231e293b'/><circle cx='56' cy='36' r='2.5' fill='%231e293b'/><path d='M45,43 Q50,47 55,43' stroke='%231e293b' stroke-width='2' fill='none'/></svg>"
+                alt="Rahul Sharma Profile Face Avatar"
+                id="avatar-user"
+                class="user-avatar profile-avatar"
+                style="width: 58px; height: 58px; border-radius: 50%; border: 2px solid #3b82f6; object-fit: cover; box-shadow: 0 2px 8px rgba(0,0,0,0.12);"
+              />
+              <div>
+                <span style="font-size: 11px; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Biometric Profile Photo</span>
+                <div style="font-size: 14px; font-weight: bold; color: #0f172a;">Rahul Sharma</div>
+                <span style="font-size: 11px; color: #10b981; font-weight: 500;">● Face Protected On-Device</span>
+              </div>
+            </div>
+
             <div class="field-row">
               <label>Full Name</label>
               <div class="value" id="val-name">Rahul Sharma</div>

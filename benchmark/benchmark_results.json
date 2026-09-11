@@ -3,7 +3,7 @@
   "precision": 0.8571,
   "recall": 1.0,
   "f1_score": 0.9231,
-  "avg_latency_ms": 0.033,
+  "avg_latency_ms": 0.047,
   "total_test_cases": 6,
   "ground_truth_pii_count": 6,
   "correctly_redacted": 6,

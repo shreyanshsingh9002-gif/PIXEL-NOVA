@@ -101,6 +101,10 @@ export function getCanonicalEntityKey(category: PIICategory, rawValue: string): 
     case "BANK_ACCOUNT":
       return `bank_${clean.replace(/[^a-zA-Z0-9]/g, "").toUpperCase()}`;
 
+    case "AVATAR":
+    case "FACE":
+      return `avatar_${clean.toLowerCase()}`;
+
     default:
       return `${category.toLowerCase()}_${clean.toLowerCase().replace(/\s+/g, " ")}`;
   }
@@ -470,6 +474,7 @@ export function deduplicateEntities(rawEntities: PIIEntity[]): PIIEntity[] {
     else if (cat === "UPI") maskedValue = "[REDACTED_UPI]";
     else if (cat === "PASSPORT") maskedValue = "[REDACTED_PASSPORT]";
     else if (cat === "BANK_ACCOUNT") maskedValue = "[REDACTED_BANK_AC]";
+    else if (cat === "AVATAR" || cat === "FACE") maskedValue = "[BLURRED_AVATAR]";
 
     ent.id = `pii_${cat.toLowerCase()}_${count}`;
     ent.maskedValue = maskedValue;
@@ -862,7 +867,7 @@ export function detectPIIInDOM(
 
     // Strict boundary: Never let a single text entity adopt the dimensions of a massive page container!
     const boundedW = Math.min(rect.width, 480);
-    const boundedH = Math.min(rect.height, 60);
+    const boundedH = (category === "AVATAR" || category === "FACE") ? Math.min(rect.height, 280) : Math.min(rect.height, 60);
 
     const safeBox: BoundingBox = {
       x: Math.round(rect.x),
@@ -1282,6 +1287,18 @@ export function detectPIIInDOM(
       }
     }
   }
+
+  // 18. Face & Avatar Visual Detection: profile photos, user avatars, biometric pictures
+  const avatarCandidates = doc.querySelectorAll<HTMLElement>(
+    "img[src*='avatar' i], img[src*='profile' i], img[class*='avatar' i], img[class*='profile' i], [class*='avatar' i] img, [class*='profile-pic' i], [id*='avatar' i], [id*='profile-pic' i], .user-avatar, .profile-avatar, [data-avatar]"
+  );
+  avatarCandidates.forEach((el) => {
+    const rect = el.getBoundingClientRect();
+    if (rect.width >= 24 && rect.height >= 24 && rect.width <= 320 && rect.height <= 320) {
+      const label = (el.getAttribute("alt") || el.getAttribute("title") || (el as HTMLImageElement).src?.split("/").pop() || "User Avatar Photo").trim();
+      helperAddEntityWithBox("AVATAR", label, "[BLURRED_AVATAR]", "MEDIUM", el);
+    }
+  });
 
   // Deduplicate and re-index all entities across DOM & Regex
   const finalEntities = deduplicateEntities(entities);
