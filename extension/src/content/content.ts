@@ -2101,6 +2101,10 @@ async function executeAgentAction(
       }
       setTimeout(clearHighlightOverlay, 900);
 
+      // Remove visual overlay immediately BEFORE click so it never occludes hardware/CDP clicks
+      const existingOverlay = document.getElementById("pixel-nova-hud-overlay");
+      if (existingOverlay) existingOverlay.remove();
+
       targetEl.focus();
 
       const elRect = targetEl.getBoundingClientRect();
@@ -2108,53 +2112,64 @@ async function executeAgentAction(
       const clientY = Math.round(elRect.top + (elRect.height > 0 ? elRect.height / 2 : 10));
 
       // 1. Primary: Genuine Hardware Click via Chrome DevTools Protocol (isTrusted: true)
-      let hardwareClicked = false;
       try {
-        const cdpRes: any = await new Promise((resolve) => {
+        await new Promise((resolve) => {
           chrome.runtime.sendMessage(
             { action: "DISPATCH_REAL_CLICK", x: clientX, y: clientY },
             (response) => resolve(response || { success: false })
           );
         });
-        if (cdpRes?.success) hardwareClicked = true;
       } catch (e) {}
 
-      // Always dispatch full pointer & mouse sequence (bypasses frameworks like Polymer/React that rely on specific mouse/pointer events)
-      targetEl.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, view: window }));
-      targetEl.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window, buttons: 1 }));
-      targetEl.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true, view: window }));
-      targetEl.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
-      targetEl.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
-      try {
-        targetEl.click();
-      } catch (e) {}
+      // 2. Full pointer & mouse event sequence on target element
+      const pointerInit: PointerEventInit = { bubbles: true, cancelable: true, composed: true, view: window, clientX, clientY, button: 0, buttons: 1, pointerId: 1, pointerType: "mouse", isPrimary: true };
+      const mouseInit: MouseEventInit = { bubbles: true, cancelable: true, composed: true, view: window, clientX, clientY, button: 0, buttons: 1 };
+      
+      targetEl.dispatchEvent(new PointerEvent("pointerdown", pointerInit));
+      targetEl.dispatchEvent(new MouseEvent("mousedown", mouseInit));
+      targetEl.dispatchEvent(new PointerEvent("pointerup", { ...pointerInit, buttons: 0 }));
+      targetEl.dispatchEvent(new MouseEvent("mouseup", { ...mouseInit, buttons: 0 }));
+      targetEl.dispatchEvent(new MouseEvent("click", { ...mouseInit, buttons: 0 }));
+      try { targetEl.click(); } catch (e) {}
 
-      // Click all inner clickable children (spans, divs, icons)
+      // 3. YouTube Ad Skip - Full Multi-Trigger Bypass
+      const isSkipAction = (action.targetText && /\bskip\b/i.test(action.targetText)) || targetEl.matches("[class*='skip' i], [id*='skip' i]");
+      if (isSkipAction) {
+        // A. Click all skip buttons across the entire player DOM
+        const allSkipElements = Array.from(document.querySelectorAll<HTMLElement>(
+          ".ytp-skip-ad-button, .ytp-ad-skip-button-modern, .ytp-ad-skip-button, .ytp-ad-skip-button-container, .ytp-ad-skip-button-container button, [id*='skip-button' i] button, [id*='skip-button' i], button.skip, [aria-label*='skip' i]"
+        ));
+        for (const el of allSkipElements) {
+          try {
+            el.dispatchEvent(new PointerEvent("pointerdown", pointerInit));
+            el.dispatchEvent(new MouseEvent("mousedown", mouseInit));
+            el.dispatchEvent(new PointerEvent("pointerup", { ...pointerInit, buttons: 0 }));
+            el.dispatchEvent(new MouseEvent("mouseup", { ...mouseInit, buttons: 0 }));
+            el.dispatchEvent(new MouseEvent("click", { ...mouseInit, buttons: 0 }));
+            el.click?.();
+          } catch (err) {}
+        }
+
+        // B. Fast-forward any HTML5 video currently playing an ad
+        try {
+          const videos = Array.from(document.querySelectorAll<HTMLVideoElement>("video"));
+          for (const vid of videos) {
+            const isAd = vid.closest(".ad-showing, .ytp-ad-player-overlay, .ytp-ad-module, .video-ads") ||
+                         document.querySelector(".ad-showing, .ytp-ad-player-overlay, .ytp-ad-module, .video-ads, [class*='ad-showing']");
+            if (isAd && isFinite(vid.duration) && vid.duration > 0) {
+              vid.currentTime = vid.duration;
+              vid.dispatchEvent(new Event("ended"));
+            }
+          }
+        } catch (vidErr) {}
+      }
+
+      // 4. Click all inner clickable children (spans, divs, icons)
       const innerElements = targetEl.querySelectorAll<HTMLElement>("button, span, div, svg");
       for (const child of innerElements) {
         try {
           child.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
           child.click?.();
-        } catch (e) {}
-      }
-
-      // If this is a YouTube skip button, also trigger parent container and ensure ad video is fast-forwarded
-      const isSkipAction = action.targetText && /\bskip\b/i.test(action.targetText);
-      if (isSkipAction || targetEl.matches("[class*='skip' i], [id*='skip' i]")) {
-        const skipParent = targetEl.closest<HTMLElement>(".ytp-ad-skip-button-container, .ytp-ad-skip-button-modern, [class*='skip' i]");
-        if (skipParent && skipParent !== targetEl) {
-          try {
-            skipParent.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
-            skipParent.click?.();
-          } catch (e) {}
-        }
-        // Universal Ad Skip Guarantee: if video player has an ad playing, skip to end
-        try {
-          const video = document.querySelector<HTMLVideoElement>(".html5-video-player.ad-showing video, video.html5-main-video");
-          const adShowing = document.querySelector(".ad-showing, .ytp-ad-player-overlay, .ytp-ad-module");
-          if (video && adShowing && isFinite(video.duration) && video.duration > 0) {
-            video.currentTime = video.duration;
-          }
         } catch (e) {}
       }
 
