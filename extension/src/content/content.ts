@@ -2132,10 +2132,37 @@ async function executeAgentAction(
       targetEl.dispatchEvent(new MouseEvent("click", { ...mouseInit, buttons: 0 }));
       try { targetEl.click(); } catch (e) {}
 
-      // 3. YouTube Ad Skip - Full Multi-Trigger Bypass
+      // 3. YouTube Ad Skip - PERMANENT NATIVE ENGINE BYPASS
       const isSkipAction = (action.targetText && /\bskip\b/i.test(action.targetText)) || targetEl.matches("[class*='skip' i], [id*='skip' i]");
       if (isSkipAction) {
-        // A. Click all skip buttons across the entire player DOM
+        // Method 1: Execute YouTube's internal player.skipAd() API directly in the page's MAIN context
+        try {
+          const script = document.createElement("script");
+          script.textContent = `
+            (function() {
+              try {
+                const player = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+                if (player) {
+                  if (typeof player.skipAd === 'function') player.skipAd();
+                  if (typeof player.stopVideo === 'function' && document.querySelector('.ad-showing')) {
+                    // Force ad video to complete
+                    const adVid = player.querySelector('video');
+                    if (adVid && isFinite(adVid.duration)) adVid.currentTime = adVid.duration;
+                  }
+                }
+              } catch(e) {}
+              // Click any skip buttons in DOM
+              document.querySelectorAll('.ytp-skip-ad-button, .ytp-ad-skip-button-modern, .ytp-ad-skip-button, .ytp-ad-skip-button-container button, [id*="skip-button" i] button, .videoAdUiSkipButton').forEach(function(el) {
+                try { el.click(); } catch(e) {}
+                try { if (el.parentElement) el.parentElement.click(); } catch(e) {}
+              });
+            })();
+          `;
+          (document.head || document.documentElement).appendChild(script);
+          script.remove();
+        } catch (scriptErr) {}
+
+        // Method 2: DOM-level click on all skip candidates
         const allSkipElements = Array.from(document.querySelectorAll<HTMLElement>(
           ".ytp-skip-ad-button, .ytp-ad-skip-button-modern, .ytp-ad-skip-button, .ytp-ad-skip-button-container, .ytp-ad-skip-button-container button, [id*='skip-button' i] button, [id*='skip-button' i], button.skip, [aria-label*='skip' i]"
         ));
@@ -2147,10 +2174,11 @@ async function executeAgentAction(
             el.dispatchEvent(new MouseEvent("mouseup", { ...mouseInit, buttons: 0 }));
             el.dispatchEvent(new MouseEvent("click", { ...mouseInit, buttons: 0 }));
             el.click?.();
+            if (el.parentElement) el.parentElement.click();
           } catch (err) {}
         }
 
-        // B. Fast-forward any HTML5 video currently playing an ad
+        // Method 3: Fast-forward any HTML5 ad video element
         try {
           const videos = Array.from(document.querySelectorAll<HTMLVideoElement>("video"));
           for (const vid of videos) {
