@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "PIXEL NOVA",
+  "version": "0.1.0",
+  "description": "Privacy-first browser AI agent",
+
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "scripting",
+    "storage",
+    "sidePanel"
+  ],
+
+  "host_permissions": [
+    "<all_urls>"
+  ],
+
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+
+  "action": {
+    "default_title": "Open PIXEL NOVA"
+  },
+
+  "side_panel": {
+    "default_path": "index.html"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
