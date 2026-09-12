@@ -236,7 +236,9 @@ export type ExtensionMessage =
   | { type: "DEEP_SEARCH"; query: string }
   | { type: "DEEP_SEARCH_RESULT"; success: boolean; result?: DeepNavResult; error?: string }
   | { type: "NAVIGATE_TAB"; url: string }
-  | { type: "NAVIGATE_TAB_RESULT"; success: boolean; url?: string; error?: string };
+  | { type: "NAVIGATE_TAB_RESULT"; success: boolean; url?: string; error?: string }
+  | { type: "HISTORY_NAVIGATE"; direction: "back" | "forward"; tabId?: number }
+  | { type: "HISTORY_NAVIGATE_RESULT"; success: boolean; direction: "back" | "forward"; url?: string; error?: string };
 
 export type ShortcutIconType =
   | "cart"

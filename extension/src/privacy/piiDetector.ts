@@ -87,7 +87,7 @@ export function getCanonicalEntityKey(category: PIICategory, rawValue: string): 
       const pinMatch = norm.match(/\b([1-9][0-9]{5})\b/);
       if (pinMatch) {
         const cleanAlpha = norm.replace(/[^a-z]/g, "").slice(0, 15);
-        return `addr_in_${cleanAlpha}_${pinMatch[1]}`;
+        return `addr_in_${cleanAlpha || "pin"}_${pinMatch[1]}`;
       }
       return `addr_${norm.replace(/[^a-z0-9]/g, "").slice(0, 35)}`;
     }
@@ -265,11 +265,25 @@ const PATTERNS: Array<{
   {
     category: "ADDRESS",
     risk: "MEDIUM",
-    regex: /\b([A-Z][a-zA-Z\s]{2,20}\s+\b[1-9][0-9]{5}\b)/g,
+    regex: /\b([A-Z][a-zA-Z\s]{2,20}[ \t]+\b[1-9][0-9]{5}\b)/g,
     validator: (val) => {
       const lower = val.toLowerCase().trim();
       // CRITICAL: NEVER match OTP codes, auth codes, login headers, or 2FA headings as addresses!
       if (/\b(?:otp|auth|authentication|authenticat[a-z]*|factor|2fa|verification|code|login|current|order|invoice|tracking|card|pass|pin|valid|minutes|seconds)\b/i.test(lower)) {
+        return false;
+      }
+      if (UI_BRAND_WORDS.has(lower)) return false;
+      return true;
+    }
+  },
+  // Indian Pincode / Postal PIN / Zip Code (e.g. PIN: 201206, Pincode: 201206, Postal PIN: 201206, Postal Code: 201206)
+  {
+    category: "ADDRESS",
+    risk: "MEDIUM",
+    regex: /\b(?:pin(?:\s*code)?|postal(?:\s*(?:code|pin))?|zip(?:\s*code)?)\s*[:#-]?\s*([1-9][0-9]{5})\b/gi,
+    validator: (val) => {
+      const lower = val.toLowerCase().trim();
+      if (/\b(?:otp|auth|authentication|authenticat[a-z]*|factor|2fa|verification|code|login|current|order|invoice|tracking|card|pass|valid|minutes|seconds)\b/i.test(lower)) {
         return false;
       }
       if (UI_BRAND_WORDS.has(lower)) return false;
@@ -424,10 +438,22 @@ export function deduplicateEntities(rawEntities: PIIEntity[]): PIIEntity[] {
         // Substring redundancy: If current value is strictly shorter and contained in other
         // e.g. currVal "ghaziabad 201206" is contained in otherVal "delivering to ghaziabad 201206"
         if (currVal.length < otherVal.length && otherVal.includes(currVal)) {
-          isRedundant = true;
+          // If current has a bounding box and other has a bounding box at a different screen location,
+          // they are two separate physical elements on the page (e.g. City field vs Pincode field).
+          // NEVER eliminate current when it occupies its own distinct visual position!
+          if (current.boundingBox && other.boundingBox) {
+            const isDiffLocation =
+              Math.abs(current.boundingBox.top - other.boundingBox.top) > 20 ||
+              Math.abs(current.boundingBox.left - other.boundingBox.left) > 20;
+            if (isDiffLocation) {
+              continue; // Keep both separate!
+            }
+          }
+
           if (!other.boundingBox && current.boundingBox) {
             other.boundingBox = current.boundingBox;
           }
+          isRedundant = true;
           break;
         }
 
@@ -803,7 +829,7 @@ export function detectPIIInDOM(
     })
     .map((i) => (i.value || "").trim())
     .filter(Boolean)
-    .join(" ");
+    .join("\n");
 
   const pageText = visibleTextPieces.length > 0
     ? `${visibleTextPieces.join("\n")}\n${inputValues}`
@@ -982,7 +1008,7 @@ export function detectPIIInDOM(
     else if (combined.includes("pan") && !combined.includes("panel") && val.length >= 4) {
       helperAddEntityWithBox("PAN", val, `[PAN_FIELD]`, "HIGH", inp);
     }
-    // Address / Street / City / State / Pincode / District (Exclude search fields)
+    // Address / Street / City / State / Pincode / Postal / Zip / District (Exclude search fields)
     else if (
       !isSearchField &&
       (combined.includes("address") ||
@@ -992,7 +1018,9 @@ export function detectPIIInDOM(
         combined.includes("pincode") ||
         combined.includes("postal") ||
         combined.includes("zip") ||
-        combined.includes("district")) &&
+        combined.includes("district") ||
+        /\b(?:pin|postcode|zipcode)\b/i.test(combined) ||
+        (/^\d{6}$/.test(val) && /\b(?:pin|postal|zip|delivery|shipping|location)\b/i.test(combined))) &&
       val.length >= 2
     ) {
       helperAddEntityWithBox("ADDRESS", val, `[REDACTED_ADDRESS]`, "MEDIUM", inp);
@@ -1055,7 +1083,7 @@ export function detectPIIInDOM(
 
   // 6. Address / City / Pincode elements in static DOM (e.g. #val-address, #val-city, or e-commerce delivery locations)
   const addrEls = doc.querySelectorAll<HTMLElement>(
-    "#glow-ingress-line2, #glow-ingress-line1, [id*='location-slot' i], [class*='delivery-location' i], [id*='address' i], [class*='address' i], [id*='city' i], [class*='city' i], [id*='pincode' i], [class*='pincode' i]"
+    "#glow-ingress-line2, #glow-ingress-line1, [id*='location-slot' i], [class*='delivery-location' i], [id*='address' i], [class*='address' i], [id*='city' i], [class*='city' i], [id*='pincode' i], [class*='pincode' i], [id*='postal' i], [class*='postal' i], [id*='zip' i], [class*='zip' i]"
   );
   addrEls.forEach((el) => {
     if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") return;
@@ -1074,7 +1102,7 @@ export function detectPIIInDOM(
 
     const isRealAddressIdentifier =
       isEcomLocation ||
-      /\b(?:address|street|delivery-address|shipping-address|pincode|zipcode|postal-code)\b/i.test(`${id} ${cls}`) ||
+      /\b(?:address|street|delivery-address|shipping-address|pincode|zipcode|postal-code|postal|zip|pin)\b/i.test(`${id} ${cls}`) ||
       /\bcity\b/i.test(`${id} ${cls}`);
 
     if (!isRealAddressIdentifier) return;

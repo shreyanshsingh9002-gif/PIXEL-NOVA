@@ -585,9 +585,11 @@ interface ProductQueryInfo {
 function parseProductQueryTokens(query: string): ProductQueryInfo {
   const clean = (query || "")
     .toLowerCase()
-    .replace(/^(?:search(?:\s+for)?|find|buy|order|open|get|add\s*(?:it)?\s*to\s*cart)\s*/i, "")
+    .replace(/^(?:open\s+product:\s*)/i, "")
+    .replace(/^(?:please\s+)?(?:open|go\s+to|visit)\s+[a-z0-9.-]+\s*(?:and\s+)?/i, "")
+    .replace(/^(?:search(?:\s+for)?|find|buy(?:\s+now)?|order|open|get|add\s*(?:it)?\s*to\s*cart)\s*/i, "")
     .replace(/\s+(?:in|on|at)\s+[a-z0-9.-]+$/i, "")
-    .replace(/\s+and\s+add\s+to\s+cart.*$/i, "")
+    .replace(/\s+(?:and\s+)?(?:add\s*(?:it\s*)?to\s*cart|buy(?:\s+now)?|order).*$/i, "")
     .replace(/^(?:open\s+product:\s*)/i, "")
     .trim();
 
@@ -630,14 +632,35 @@ function scoreProductCardCandidate(
     return { score: 0, isMatch: false, reason: "Filtered accessory (case/stand/cover)" };
   }
 
-  // 2. Discriminator Matching (e.g. "m4", "16", "pro")
-  // Check if query discriminators are present in title
-  let missingDiscriminator = false;
+  // 2. Strict Model / Version / Number Discriminator Matching
+  // Numeric tokens (e.g. "17", "16", "15", "5090", "128gb") and chip tokens MUST be present in the title!
+  // It is impossible for an "iPhone 16 Pro" to match an "iPhone 17 Pro" query!
   for (const disc of queryInfo.discriminators) {
-    const discReg = new RegExp(`\\b${disc}\\b`, "i");
-    if (!discReg.test(t)) {
-      missingDiscriminator = true;
+    const isNumericOrChip = /\d/.test(disc) || /^m[1-9]$/i.test(disc);
+    if (isNumericOrChip) {
+      const discReg = new RegExp(`\\b${disc}\\b`, "i");
+      if (!discReg.test(t)) {
+        return {
+          score: 0,
+          isMatch: false,
+          reason: `Strict version mismatch: required model '${disc}' not present in title`
+        };
+      }
     }
+  }
+
+  // Tier discriminators: If user explicitly asked for "pro", "max", "plus", or "ultra", candidate MUST match
+  if (queryInfo.discriminators.includes("pro") && !/\bpro\b/i.test(t)) {
+    return { score: 0, isMatch: false, reason: "Tier mismatch: 'pro' requested but absent in title" };
+  }
+  if (queryInfo.discriminators.includes("max") && !/\bmax\b/i.test(t)) {
+    return { score: 0, isMatch: false, reason: "Tier mismatch: 'max' requested but absent in title" };
+  }
+  if (queryInfo.discriminators.includes("ultra") && !/\bultra\b/i.test(t)) {
+    return { score: 0, isMatch: false, reason: "Tier mismatch: 'ultra' requested but absent in title" };
+  }
+  if (queryInfo.discriminators.includes("plus") && !/\bplus\b/i.test(t)) {
+    return { score: 0, isMatch: false, reason: "Tier mismatch: 'plus' requested but absent in title" };
   }
 
   // 3. Prevent chip confusion (e.g. M4 requested vs M5, M3, M2, M1)
@@ -664,12 +687,8 @@ function scoreProductCardCandidate(
   }
 
   // If query had discriminators and title matched all of them, give significant boost
-  if (!missingDiscriminator && queryInfo.discriminators.length > 0) {
+  if (queryInfo.discriminators.length > 0) {
     score += 30;
-  } else if (missingDiscriminator && queryInfo.discriminators.length > 0) {
-    // Adaptive matching for unreleased/future models (e.g. "iPhone 17 Pro"):
-    // Do NOT return score 0 if base keywords (e.g. "iphone" + "pro") match strongly!
-    score -= 15;
   }
 
   // Minimum keyword match threshold
@@ -698,6 +717,188 @@ function scoreProductCardCandidate(
   if (hasAddToCartBtn) score += 6;
 
   return { score, isMatch: score > 0, reason: `Verified Match (Score: ${score})` };
+}
+
+/**
+ * Multi-Tier Robust Click Engine:
+ * Guarantees reliable clicks across modern frameworks (React 18, Next.js, Angular, Vue, Tailwind, Shadow DOM)
+ * 1. Viewport & Sticky Header Clearance
+ * 2. Component Hierarchy Resolution (inner text/icon vs outer button/form)
+ * 3. Overlay & Interception Bypass
+ * 4. Tier 1: Hardware-Level CDP Click via Chrome DevTools Protocol (isTrusted: true)
+ * 5. Tier 2: Realistic 7-Event Pointer & Mouse Lifecycle with exact client coordinates
+ * 6. Tier 3: Native DOM .click() & Form Submission trigger
+ * 7. Tier 4: Keyboard Accessibility Trigger (Enter & Space keys)
+ */
+async function robustClickElement(targetEl: HTMLElement): Promise<boolean> {
+  if (!targetEl) return false;
+
+  // 1. Resolve true interactive element in the hierarchy
+  const interactiveTarget =
+    targetEl.closest<HTMLElement>(
+      "button, a, input, [role='button'], [role='link'], [role='tab'], [role='menuitem'], [tabindex], select, summary, [onclick], [data-action], .a-button, .a-button-inner"
+    ) || targetEl;
+
+  // 2. Viewport & Sticky Header Clearance: scroll into center view and ensure no fixed header overlap
+  try {
+    interactiveTarget.scrollIntoView({ behavior: "instant", block: "center", inline: "nearest" });
+  } catch (e) {
+    try {
+      interactiveTarget.scrollIntoView();
+    } catch (err) {}
+  }
+  await new Promise((r) => setTimeout(r, 60));
+
+  let rect = interactiveTarget.getBoundingClientRect();
+  // If element is tucked under a sticky/fixed navbar at the top of the viewport
+  if (rect.top < 110) {
+    window.scrollBy({ top: rect.top - 140, behavior: "instant" });
+    await new Promise((r) => setTimeout(r, 60));
+    rect = interactiveTarget.getBoundingClientRect();
+  }
+
+  // 3. Compute precise center coordinates
+  const clientX = Math.round(rect.left + Math.max(2, rect.width / 2));
+  const clientY = Math.round(rect.top + Math.max(2, rect.height / 2));
+
+  // 4. Floating Overlay & Obstruction Bypass
+  try {
+    const topEl = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
+    if (topEl && !interactiveTarget.contains(topEl) && !topEl.contains(interactiveTarget)) {
+      if (topEl.matches("[class*='cookie' i], [id*='cookie' i], [class*='consent' i], [class*='backdrop' i], [class*='overlay' i], [class*='banner' i], [class*='modal' i], [role='dialog']")) {
+        const dismissBtn = topEl.querySelector<HTMLElement>(
+          "button[aria-label*='close' i], button[aria-label*='dismiss' i], [class*='close' i], button"
+        );
+        if (dismissBtn) {
+          dismissBtn.click();
+          await new Promise((r) => setTimeout(r, 120));
+        }
+      }
+    }
+  } catch (e) {}
+
+  // 5. Tier 1: Hardware-Level CDP Click (isTrusted: true)
+  let cdpSuccess = false;
+  try {
+    const cdpRes: any = await new Promise((resolve) => {
+      chrome.runtime.sendMessage(
+        { action: "DISPATCH_REAL_CLICK", x: clientX, y: clientY },
+        (res) => {
+          if (chrome.runtime.lastError || !res?.success) {
+            resolve({ success: false });
+          } else {
+            resolve(res);
+          }
+        }
+      );
+    });
+    if (cdpRes?.success) {
+      cdpSuccess = true;
+    }
+  } catch (e) {
+    cdpSuccess = false;
+  }
+
+  // 6. Tier 2: Realistic 7-Event Pointer & Mouse Lifecycle with exact client coordinates
+  const pointerInit: PointerEventInit = {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+    view: window,
+    clientX,
+    clientY,
+    screenX: clientX,
+    screenY: clientY,
+    button: 0,
+    buttons: 1,
+    pointerId: 1,
+    pointerType: "mouse",
+    isPrimary: true,
+    width: 1,
+    height: 1
+  };
+
+  const mouseInit: MouseEventInit = {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+    view: window,
+    clientX,
+    clientY,
+    screenX: clientX,
+    screenY: clientY,
+    button: 0,
+    buttons: 1,
+    detail: 1
+  };
+
+  const elementsToTrigger = Array.from(new Set([interactiveTarget, targetEl])).filter(Boolean);
+  for (const el of elementsToTrigger) {
+    try {
+      el.focus();
+      el.dispatchEvent(new PointerEvent("pointerover", pointerInit));
+      el.dispatchEvent(new PointerEvent("pointerenter", pointerInit));
+      el.dispatchEvent(new MouseEvent("mouseover", mouseInit));
+      el.dispatchEvent(new MouseEvent("mouseenter", mouseInit));
+
+      el.dispatchEvent(new PointerEvent("pointerdown", pointerInit));
+      el.dispatchEvent(new MouseEvent("mousedown", mouseInit));
+
+      el.dispatchEvent(new PointerEvent("pointerup", { ...pointerInit, buttons: 0 }));
+      el.dispatchEvent(new MouseEvent("mouseup", { ...mouseInit, buttons: 0 }));
+      el.dispatchEvent(new MouseEvent("click", { ...mouseInit, buttons: 0 }));
+    } catch (err) {}
+  }
+
+  // 7. Tier 3: Native DOM .click() & Form Submission
+  try {
+    interactiveTarget.click();
+  } catch (e) {}
+  if (targetEl !== interactiveTarget) {
+    try {
+      targetEl.click();
+    } catch (e) {}
+  }
+
+  // Form submission check if button/input is part of a form
+  if (interactiveTarget.tagName.toLowerCase() === "button" || interactiveTarget.tagName.toLowerCase() === "input") {
+    const btn = interactiveTarget as (HTMLButtonElement | HTMLInputElement);
+    if (btn.form && (btn.type === "submit" || !btn.type)) {
+      try {
+        btn.form.requestSubmit(btn);
+      } catch (formErr) {
+        try {
+          btn.form.submit();
+        } catch (submitErr) {}
+      }
+    }
+  }
+
+  // 8. Tier 4: Keyboard Accessibility Trigger (Enter & Space)
+  try {
+    const enterOpts = {
+      key: "Enter",
+      code: "Enter",
+      keyCode: 13,
+      which: 13,
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      view: window
+    };
+    interactiveTarget.dispatchEvent(new KeyboardEvent("keydown", enterOpts));
+    interactiveTarget.dispatchEvent(new KeyboardEvent("keypress", enterOpts));
+    interactiveTarget.dispatchEvent(new KeyboardEvent("keyup", enterOpts));
+  } catch (err) {}
+
+  // 9. Platform-Specific Double-Click (e.g. Spotify desktop web player rows)
+  if (window.location.hostname.includes("spotify.com")) {
+    try {
+      interactiveTarget.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, view: window }));
+    } catch (e) {}
+  }
+
+  return true;
 }
 
 async function clickAddToCartOnProductPage(): Promise<{ success: boolean; productFound: boolean; productTitle?: string; result?: string; error?: string }> {
@@ -768,7 +969,7 @@ async function clickAddToCartOnProductPage(): Promise<{ success: boolean; produc
   cartBtn.scrollIntoView({ behavior: "smooth", block: "center" });
   await new Promise((r) => setTimeout(r, 600));
 
-  cartBtn.click();
+  await robustClickElement(cartBtn);
   await new Promise((r) => setTimeout(r, 1400));
 
   // Dismiss any AppleCare / warranty upsell popup ("No thanks")
@@ -791,7 +992,7 @@ async function clickAddToCartOnProductPage(): Promise<{ success: boolean; produc
 async function findAndAddVerifiedProduct(
   query: string,
   checkFirstViewOnly: boolean
-): Promise<{ success: boolean; productFound: boolean; productTitle?: string; navigatingToProduct?: boolean; productUrl?: string; addedDirectly?: boolean; result?: string; error?: string }> {
+): Promise<{ success: boolean; productFound: boolean; productTitle?: string; navigatingToProduct?: boolean; productUrl?: string; addedDirectly?: boolean; hasNoResultsBanner?: boolean; result?: string; error?: string }> {
   // A. Check if current page is ALREADY a specific product page (e.g. /dp/ on Amazon)
   const onProductPage =
     window.location.href.includes("/dp/") ||
@@ -801,6 +1002,18 @@ async function findAndAddVerifiedProduct(
   if (onProductPage) {
     return await clickAddToCartOnProductPage();
   }
+
+  // Check for Amazon / Flipkart fallback "No results" or "Showing results for" banners
+  const noResultBanners = Array.from(document.querySelectorAll<HTMLElement>(
+    "div[data-component-type='s-no-results-header'], .s-no-outline, ._16bAw1, .s-result-list-parent-container:has(.s-no-outline), [class*='no-result' i], [id*='no-result' i], h1, h2, h3, div.a-row"
+  ));
+  const hasNoResultsBanner = noResultBanners.some((el) => {
+    const text = (el.innerText || el.textContent || "").toLowerCase();
+    return (
+      (text.includes("no results for") || text.includes("0 results for") || text.includes("showing results for") || text.includes("did you mean")) &&
+      !text.includes("1-16 of") && !text.includes("1-24 of")
+    );
+  });
 
   // B. Search results page: locate all product result cards
   const queryInfo = parseProductQueryTokens(query);
@@ -841,6 +1054,7 @@ async function findAndAddVerifiedProduct(
     return {
       success: false,
       productFound: false,
+      hasNoResultsBanner,
       error: "No product cards detected on the current page."
     };
   }
@@ -906,6 +1120,7 @@ async function findAndAddVerifiedProduct(
     return {
       success: false,
       productFound: false,
+      hasNoResultsBanner,
       error: checkFirstViewOnly
         ? `No genuine match for "${queryInfo.cleanQuery}" visible in the first view.`
         : `Could not find verified match for "${queryInfo.cleanQuery}" after scanning visible cards.`
@@ -1951,10 +2166,7 @@ async function executeAgentAction(
         );
         const announceSpan = (parentButton?.querySelector<HTMLElement>(".a-button-text, [id*='announce']") || targetEl) as HTMLElement;
 
-        // Scroll into center view
-        (parentButton || targetEl).scrollIntoView({ behavior: "smooth", block: "center" });
-
-        // Highlight
+        // Visual feedback highlight
         const rect = (parentButton || targetEl).getBoundingClientRect();
         const overlay = document.createElement("div");
         overlay.style.position = "fixed";
@@ -1970,30 +2182,9 @@ async function executeAgentAction(
         document.body.appendChild(overlay);
         setTimeout(() => overlay.remove(), 1200);
 
-        // Click all relevant elements in the hierarchy
-        const elementsToClick = Array.from(new Set([announceSpan, inputEl, parentButton, targetEl])).filter(Boolean) as HTMLElement[];
-        for (const el of elementsToClick) {
-          el.focus();
-          el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, view: window, composed: true }));
-          el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window, buttons: 1, composed: true }));
-          el.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true, view: window, composed: true }));
-          el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window, composed: true }));
-          el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window, composed: true }));
-          try {
-            el.click();
-          } catch (e) {}
-        }
-
-        // Also trigger form.requestSubmit if input is part of a form
-        if (inputEl && inputEl.form) {
-          try {
-            inputEl.form.requestSubmit(inputEl);
-          } catch (e) {
-            try {
-              inputEl.form.submit();
-            } catch (err) {}
-          }
-        }
+        // Robust click across buy-box hierarchy
+        const candidate = inputEl || announceSpan || parentButton || targetEl;
+        await robustClickElement(candidate);
 
         return {
           success: true,
@@ -2056,44 +2247,8 @@ async function executeAgentAction(
       }
       setTimeout(clearHighlightOverlay, 900);
 
-      targetEl.focus();
-
-      const elRect = targetEl.getBoundingClientRect();
-      const clientX = Math.round(elRect.left + (elRect.width > 0 ? elRect.width / 2 : 10));
-      const clientY = Math.round(elRect.top + (elRect.height > 0 ? elRect.height / 2 : 10));
-
-      // 1. Primary: Genuine Hardware Click via Chrome DevTools Protocol (isTrusted: true)
-      let hardwareClicked = false;
-      try {
-        const cdpRes: any = await new Promise((resolve) => {
-          chrome.runtime.sendMessage(
-            { action: "DISPATCH_REAL_CLICK", x: clientX, y: clientY },
-            (response) => resolve(response || { success: false })
-          );
-        });
-        if (cdpRes?.success) hardwareClicked = true;
-      } catch (e) {}
-
-      if (!hardwareClicked) {
-        targetEl.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, view: window }));
-        targetEl.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window, buttons: 1 }));
-        targetEl.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true, view: window }));
-        targetEl.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
-        targetEl.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
-      }
-      targetEl.click();
-
-      // Spotify track rows start playback upon double-click
-      if (window.location.hostname.includes("spotify.com")) {
-        targetEl.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, view: window }));
-      }
-
-      // Trigger wrapped parent container if applicable (e.g. Amazon .a-button or #submit.buy-now)
-      const aButtonWrap = targetEl.closest<HTMLElement>(".a-button, .a-button-inner, [id*='buy-now'], [id*='add-to-cart']");
-      if (aButtonWrap && aButtonWrap !== targetEl) {
-        aButtonWrap.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
-        aButtonWrap.click?.();
-      }
+      // Execute Multi-Tier Robust Click Engine
+      await robustClickElement(targetEl);
 
       return {
         success: true,

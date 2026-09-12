@@ -49,5 +49,15 @@
       "js": ["content.js"],
       "run_at": "document_idle"
     }
-  ]
+  ],
+
+  "commands": {
+    "toggle-nova-voice": {
+      "suggested_key": {
+        "default": "Alt+N",
+        "mac": "Alt+N"
+      },
+      "description": "Quick-Launch PIXEL NOVA Voice Commander"
+    }
+  }
 }
